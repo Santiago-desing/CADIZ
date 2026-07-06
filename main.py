@@ -13,7 +13,7 @@ from bson import ObjectId
 class Config:
     TOKEN = os.getenv("TOKEN", "TU_TOKEN_AQUI")
     MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
-    OWNER_ID = 1452608365912920170  # ID del Propietario (usuario)
+    OWNER_ID = 1452608365912920170
 
     # Roles
     STAFF_GENERAL = 1467132351409819668
@@ -37,7 +37,7 @@ class Config:
     VERIFICADO = 1452608365795610694
     NO_VERIFICADO = 1452608365795610692
 
-    # Categorías de tickets
+    # Categorías de tickets (TODAS las que debe permitir cerrar)
     CAT_TICKETS_GENERAL = 1480580609075052757
     CAT_TICKETS_FUNDACION = 1510944914718982254
     CAT_TICKETS_FACCIONES_LEGALES = 1510944986248646666
@@ -47,6 +47,19 @@ class Config:
     CAT_TICKETS_DONACION = 1510945244605190184
     CAT_TICKETS_INCIDENCIAS_TECNICAS = 1510945373143699457
     CAT_TICKETS_VERIFICACION = 1516371570921046088
+
+    # Lista de todas las categorías de tickets (para facilitar comprobaciones)
+    TICKET_CATEGORIES = [
+        CAT_TICKETS_GENERAL,
+        CAT_TICKETS_FUNDACION,
+        CAT_TICKETS_FACCIONES_LEGALES,
+        CAT_TICKETS_FACCIONES_ILEGALES,
+        CAT_TICKETS_REPORTES,
+        CAT_TICKETS_EMPRESAS,
+        CAT_TICKETS_DONACION,
+        CAT_TICKETS_INCIDENCIAS_TECNICAS,
+        CAT_TICKETS_VERIFICACION,
+    ]
 
     # Canales
     CH_BIENVENIDAS = 1452608366860959826
@@ -271,12 +284,17 @@ def is_fundador_or_higher(member: discord.Member) -> bool:
     return any(r_id in member_roles for r_id in roles_ids)
 
 def is_owner_or_dueno(member: discord.Member) -> bool:
-    """Verifica si el miembro tiene el rol de Propietario o Dueño, o es el dueño del bot."""
     if member.id == Config.OWNER_ID:
         return True
     roles_ids = [Config.PROPIETARIO, Config.DUENO]
     member_roles = [r.id for r in member.roles]
     return any(r_id in member_roles for r_id in roles_ids)
+
+def is_ticket_channel(channel: discord.TextChannel) -> bool:
+    """Comprueba si el canal pertenece a una categoría de tickets."""
+    if not channel.category:
+        return False
+    return channel.category.id in Config.TICKET_CATEGORIES
 
 def get_utc_timestamp():
     return datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -344,9 +362,10 @@ async def get_roblox_avatar(user_id: int) -> Optional[str]:
 
 # --- Confirmación para verificación ---
 class ConfirmView(ui.View):
-    def __init__(self, user_id: int):
+    def __init__(self, user_id: int, interaction: Interaction):
         super().__init__(timeout=60.0)
         self.user_id = user_id
+        self.interaction = interaction
         self.confirmed = False
 
     @ui.button(label="✅ Sí, estoy seguro", style=ButtonStyle.success, custom_id="confirm_yes")
@@ -356,6 +375,7 @@ class ConfirmView(ui.View):
             return
         self.confirmed = True
         await interaction.response.send_message("✅ ¡Perfecto! Comenzamos con la verificación.", ephemeral=True)
+
         user = interaction.user
         embed = Embed(
             title="🔐 Verificación - Cádiz RP",
@@ -363,6 +383,7 @@ class ConfirmView(ui.View):
             color=Color.blue()
         )
         embed.set_footer(text=get_footer())
+
         try:
             await user.send(embed=embed)
             verification_sessions[user.id] = {
@@ -371,7 +392,15 @@ class ConfirmView(ui.View):
                 "timeout_task": asyncio.create_task(self.timeout_verification(user))
             }
         except discord.Forbidden:
-            await user.send("❌ No puedo enviarte mensajes directos. Por favor, habilita los DMs de este servidor.")
+            await interaction.followup.send(
+                "❌ No puedo enviarte mensajes directos. Por favor, habilita los DMs de este servidor o abre un ticket.",
+                ephemeral=True
+            )
+        except Exception as e:
+            await interaction.followup.send(
+                f"❌ Ocurrió un error al iniciar la verificación. Por favor, intenta de nuevo o abre un ticket.",
+                ephemeral=True
+            )
         self.stop()
 
     @ui.button(label="❌ No, cancelar", style=ButtonStyle.danger, custom_id="confirm_no")
@@ -417,8 +446,31 @@ class VerificationPanelView(ui.View):
     async def start_verification(self, interaction: Interaction, button: ui.Button):
         user = interaction.user
         if user.id in verification_sessions:
-            await interaction.response.send_message("Ya tienes un proceso de verificación en curso. Revisa tus mensajes directos.", ephemeral=True)
+            await interaction.response.send_message(
+                "Ya tienes un proceso de verificación en curso. Revisa tus mensajes directos.",
+                ephemeral=True
+            )
             return
+
+        try:
+            await user.send("🔍 Comprobando permisos de DM...")
+            async for msg in user.history(limit=1):
+                if msg.content == "🔍 Comprobando permisos de DM...":
+                    await msg.delete()
+                    break
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                "❌ No puedo enviarte mensajes directos. Por favor, habilita los DMs de este servidor y vuelve a intentarlo.",
+                ephemeral=True
+            )
+            return
+        except Exception as e:
+            await interaction.response.send_message(
+                f"❌ Error al verificar permisos. Por favor, intenta de nuevo.",
+                ephemeral=True
+            )
+            return
+
         embed_confirm = Embed(
             title="⚠️ Confirmación necesaria",
             description="Has solicitado iniciar el proceso de verificación en **Cádiz RP**.\n\n"
@@ -429,11 +481,22 @@ class VerificationPanelView(ui.View):
         )
         embed_confirm.set_footer(text=get_footer())
         try:
-            view = ConfirmView(user.id)
+            view = ConfirmView(user.id, interaction)
             await user.send(embed=embed_confirm, view=view)
-            await interaction.response.send_message("✅ Te he enviado un mensaje directo. **Confirma** tu decisión para comenzar.", ephemeral=True)
+            await interaction.response.send_message(
+                "✅ Te he enviado un mensaje directo con la confirmación. **Revisa tus DMs** y pulsa 'Sí, estoy seguro' para comenzar.",
+                ephemeral=True
+            )
         except discord.Forbidden:
-            await interaction.response.send_message("❌ No puedo enviarte mensajes directos. Por favor, habilita los DMs de este servidor.", ephemeral=True)
+            await interaction.response.send_message(
+                "❌ No puedo enviarte mensajes directos. Por favor, habilita los DMs de este servidor.",
+                ephemeral=True
+            )
+        except Exception as e:
+            await interaction.response.send_message(
+                f"❌ Error al enviar el mensaje de confirmación. Por favor, intenta de nuevo.",
+                ephemeral=True
+            )
 
     @ui.button(label="🎫 TICKET", style=ButtonStyle.primary, custom_id="verify_ticket")
     async def ticket_verification(self, interaction: Interaction, button: ui.Button):
@@ -543,7 +606,7 @@ class TicketPanelView(ui.View):
         super().__init__(timeout=None)
         self.add_item(TicketSelectMenu())
 
-# --- Control de Tickets ---
+# --- Control de Tickets (MEJORADO: cierre por categoría) ---
 class TicketControlView(ui.View):
     def __init__(self, channel_id: int):
         super().__init__(timeout=None)
@@ -558,9 +621,14 @@ class TicketControlView(ui.View):
         if channel.id != self.channel_id:
             await interaction.response.send_message("Este botón no pertenece a este canal.", ephemeral=True)
             return
+        # Verificar si el canal es realmente un ticket (por categoría)
+        if not is_ticket_channel(channel):
+            await interaction.response.send_message("Este canal no es un ticket válido.", ephemeral=True)
+            return
         await interaction.response.send_message("Cerrando ticket...")
+        # Eliminar de ticket_data si existe
+        ticket_data.pop(channel.id, None)
         await channel.delete()
-        ticket_data.pop(self.channel_id, None)
 
     @ui.button(label="Reclamar", style=ButtonStyle.primary, custom_id="ticket_claim")
     async def claim_ticket(self, interaction: Interaction, button: ui.Button):
@@ -571,10 +639,14 @@ class TicketControlView(ui.View):
         if channel.id != self.channel_id:
             await interaction.response.send_message("Este botón no pertenece a este canal.", ephemeral=True)
             return
+        if not is_ticket_channel(channel):
+            await interaction.response.send_message("Este canal no es un ticket válido.", ephemeral=True)
+            return
         data = ticket_data.get(self.channel_id)
         if not data:
-            await interaction.response.send_message("Este ticket no está registrado.", ephemeral=True)
-            return
+            # Si no está en memoria, lo creamos para poder reclamarlo
+            ticket_data[self.channel_id] = {"owner_id": None, "claimed_by": None, "locked": False}
+            data = ticket_data[self.channel_id]
         if data["claimed_by"]:
             await interaction.response.send_message(f"Este ticket ya ha sido reclamado por <@{data['claimed_by']}>.", ephemeral=True)
             return
@@ -598,18 +670,27 @@ class TicketControlView(ui.View):
         if channel.id != self.channel_id:
             await interaction.response.send_message("Este botón no pertenece a este canal.", ephemeral=True)
             return
+        if not is_ticket_channel(channel):
+            await interaction.response.send_message("Este canal no es un ticket válido.", ephemeral=True)
+            return
         data = ticket_data.get(self.channel_id)
         if not data:
-            await interaction.response.send_message("Este ticket no está registrado.", ephemeral=True)
-            return
+            ticket_data[self.channel_id] = {"owner_id": None, "claimed_by": None, "locked": False}
+            data = ticket_data[self.channel_id]
         if data["locked"]:
             await interaction.response.send_message("El ticket ya está bloqueado.", ephemeral=True)
             return
         data["locked"] = True
         guild = interaction.guild
-        member = guild.get_member(data["owner_id"])
-        if member:
-            await channel.set_permissions(member, send_messages=False)
+        # Intentar obtener el propietario del ticket desde el topic o del primer mensaje, pero si no está en memoria, no podemos bloquear a nadie
+        # En su lugar, bloqueamos el permiso de escritura a @everyone y lo dejamos solo para staff y bot
+        overwrites = channel.overwrites
+        for target, overwrite in overwrites.items():
+            if isinstance(target, discord.Role) and target == guild.default_role:
+                overwrite.send_messages = False
+            elif isinstance(target, discord.Member) and target != interaction.user and not is_staff(target):
+                overwrite.send_messages = False
+        await channel.edit(overwrites=overwrites)
         embed = Embed(
             title="🔒 Ticket bloqueado",
             description=f"El ticket ha sido bloqueado por **{interaction.user.mention}**.\n"
@@ -630,18 +711,26 @@ class TicketControlView(ui.View):
         if channel.id != self.channel_id:
             await interaction.response.send_message("Este botón no pertenece a este canal.", ephemeral=True)
             return
+        if not is_ticket_channel(channel):
+            await interaction.response.send_message("Este canal no es un ticket válido.", ephemeral=True)
+            return
         data = ticket_data.get(self.channel_id)
         if not data:
-            await interaction.response.send_message("Este ticket no está registrado.", ephemeral=True)
-            return
+            ticket_data[self.channel_id] = {"owner_id": None, "claimed_by": None, "locked": False}
+            data = ticket_data[self.channel_id]
         if not data["locked"]:
             await interaction.response.send_message("El ticket no está bloqueado.", ephemeral=True)
             return
         data["locked"] = False
         guild = interaction.guild
-        member = guild.get_member(data["owner_id"])
-        if member:
-            await channel.set_permissions(member, send_messages=True)
+        # Restaurar permisos: dar permiso de escritura a @everyone y al propietario (si se conoce)
+        overwrites = channel.overwrites
+        for target, overwrite in overwrites.items():
+            if isinstance(target, discord.Role) and target == guild.default_role:
+                overwrite.send_messages = True
+            elif isinstance(target, discord.Member) and not is_staff(target):
+                overwrite.send_messages = True
+        await channel.edit(overwrites=overwrites)
         embed = Embed(
             title="🔓 Ticket desbloqueado",
             description=f"El ticket ha sido desbloqueado por **{interaction.user.mention}**.\n"
@@ -970,12 +1059,15 @@ async def cerrar_ticket(interaction: Interaction):
             await interaction.response.send_message("No tienes permisos.", ephemeral=True)
             return
         channel = interaction.channel
-        if not isinstance(channel, discord.TextChannel) or channel.id not in ticket_data:
-            await interaction.response.send_message("Este no es un canal de ticket válido.", ephemeral=True)
+        if not isinstance(channel, discord.TextChannel):
+            await interaction.response.send_message("Este comando solo funciona en un canal de texto.", ephemeral=True)
+            return
+        if not is_ticket_channel(channel):
+            await interaction.response.send_message("Este canal no es un ticket válido.", ephemeral=True)
             return
         await interaction.response.send_message("Cerrando ticket...")
-        await channel.delete()
         ticket_data.pop(channel.id, None)
+        await channel.delete()
     except Exception as e:
         await interaction.response.send_message(f"Error: {e}", ephemeral=True)
 
@@ -986,10 +1078,16 @@ async def reclamar_ticket(interaction: Interaction):
             await interaction.response.send_message("No tienes permisos.", ephemeral=True)
             return
         channel = interaction.channel
-        if not isinstance(channel, discord.TextChannel) or channel.id not in ticket_data:
-            await interaction.response.send_message("Este no es un canal de ticket válido.", ephemeral=True)
+        if not isinstance(channel, discord.TextChannel):
+            await interaction.response.send_message("Este comando solo funciona en un canal de texto.", ephemeral=True)
             return
-        data = ticket_data[channel.id]
+        if not is_ticket_channel(channel):
+            await interaction.response.send_message("Este canal no es un ticket válido.", ephemeral=True)
+            return
+        data = ticket_data.get(channel.id)
+        if not data:
+            ticket_data[channel.id] = {"owner_id": None, "claimed_by": None, "locked": False}
+            data = ticket_data[channel.id]
         if data["claimed_by"]:
             await interaction.response.send_message(f"Este ticket ya ha sido reclamado por <@{data['claimed_by']}>.", ephemeral=True)
             return
@@ -1013,17 +1111,28 @@ async def bloquear_ticket(interaction: Interaction):
             await interaction.response.send_message("No tienes permisos.", ephemeral=True)
             return
         channel = interaction.channel
-        if not isinstance(channel, discord.TextChannel) or channel.id not in ticket_data:
-            await interaction.response.send_message("Este no es un canal de ticket válido.", ephemeral=True)
+        if not isinstance(channel, discord.TextChannel):
+            await interaction.response.send_message("Este comando solo funciona en un canal de texto.", ephemeral=True)
             return
-        data = ticket_data[channel.id]
+        if not is_ticket_channel(channel):
+            await interaction.response.send_message("Este canal no es un ticket válido.", ephemeral=True)
+            return
+        data = ticket_data.get(channel.id)
+        if not data:
+            ticket_data[channel.id] = {"owner_id": None, "claimed_by": None, "locked": False}
+            data = ticket_data[channel.id]
         if data["locked"]:
             await interaction.response.send_message("El ticket ya está bloqueado.", ephemeral=True)
             return
         data["locked"] = True
-        member = interaction.guild.get_member(data["owner_id"])
-        if member:
-            await channel.set_permissions(member, send_messages=False)
+        guild = interaction.guild
+        overwrites = channel.overwrites
+        for target, overwrite in overwrites.items():
+            if isinstance(target, discord.Role) and target == guild.default_role:
+                overwrite.send_messages = False
+            elif isinstance(target, discord.Member) and target != interaction.user and not is_staff(target):
+                overwrite.send_messages = False
+        await channel.edit(overwrites=overwrites)
         embed = Embed(
             title="🔒 Ticket bloqueado",
             description=f"El ticket ha sido bloqueado por **{interaction.user.mention}**.\n"
@@ -1043,17 +1152,28 @@ async def desbloquear_ticket(interaction: Interaction):
             await interaction.response.send_message("No tienes permisos.", ephemeral=True)
             return
         channel = interaction.channel
-        if not isinstance(channel, discord.TextChannel) or channel.id not in ticket_data:
-            await interaction.response.send_message("Este no es un canal de ticket válido.", ephemeral=True)
+        if not isinstance(channel, discord.TextChannel):
+            await interaction.response.send_message("Este comando solo funciona en un canal de texto.", ephemeral=True)
             return
-        data = ticket_data[channel.id]
+        if not is_ticket_channel(channel):
+            await interaction.response.send_message("Este canal no es un ticket válido.", ephemeral=True)
+            return
+        data = ticket_data.get(channel.id)
+        if not data:
+            ticket_data[channel.id] = {"owner_id": None, "claimed_by": None, "locked": False}
+            data = ticket_data[channel.id]
         if not data["locked"]:
             await interaction.response.send_message("El ticket no está bloqueado.", ephemeral=True)
             return
         data["locked"] = False
-        member = interaction.guild.get_member(data["owner_id"])
-        if member:
-            await channel.set_permissions(member, send_messages=True)
+        guild = interaction.guild
+        overwrites = channel.overwrites
+        for target, overwrite in overwrites.items():
+            if isinstance(target, discord.Role) and target == guild.default_role:
+                overwrite.send_messages = True
+            elif isinstance(target, discord.Member) and not is_staff(target):
+                overwrite.send_messages = True
+        await channel.edit(overwrites=overwrites)
         embed = Embed(
             title="🔓 Ticket desbloqueado",
             description=f"El ticket ha sido desbloqueado por **{interaction.user.mention}**.\n"
@@ -1111,7 +1231,7 @@ async def cerrar_servidor(interaction: Interaction):
         allowed_mentions=discord.AllowedMentions(roles=True)
     )
 
-# ---------- Votación (STAFF GENERAL) ----------
+# ---------- Votación (STAFF GENERAL, SIN COOLDOWN) ----------
 @bot.tree.command(name="votación-abrir", description="Inicia una votación para abrir el servidor (solo staff)")
 async def votacion_abrir(interaction: Interaction):
     if not is_staff(interaction.user):
@@ -1476,5 +1596,4 @@ async def sync(interaction: Interaction):
 
 # ===================== EJECUCIÓN =====================
 if __name__ == "__main__":
-    bot.run(Config.TOKEN)
     bot.run(Config.TOKEN)
