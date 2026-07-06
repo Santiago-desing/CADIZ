@@ -13,6 +13,7 @@ from bson import ObjectId
 class Config:
     TOKEN = os.getenv("TOKEN", "TU_TOKEN_AQUI")
     MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+    OWNER_ID = 1452608365912920170  # ID del Propietario
 
     # Roles
     STAFF_GENERAL = 1467132351409819668
@@ -265,7 +266,7 @@ def is_staff(member: discord.Member) -> bool:
     return staff_role in member.roles
 
 def is_fundador_or_higher(member: discord.Member) -> bool:
-    roles_ids = [Config.FUNDADOR, Config.CO_DUENO, Config.DUENO, Config.PROPIETARIO]
+    roles_ids = [Config.FUNDADOR, Config.CO_FUNDADOR, Config.CO_DUENO, Config.DUENO, Config.PROPIETARIO]
     member_roles = [r.id for r in member.roles]
     return any(r_id in member_roles for r_id in roles_ids)
 
@@ -1057,7 +1058,7 @@ async def desbloquear_ticket(interaction: Interaction):
     except Exception as e:
         await interaction.response.send_message(f"Error: {e}", ephemeral=True)
 
-# ---------- Abrir Servidor ----------
+# ---------- Abrir Servidor (STAFF GENERAL) ----------
 @bot.tree.command(name="abrir-servidor", description="Abre el servidor (solo staff)")
 async def abrir_servidor(interaction: Interaction):
     if not is_staff(interaction.user):
@@ -1068,7 +1069,8 @@ async def abrir_servidor(interaction: Interaction):
         title="🟢 SERVIDOR ABIERTO",
         description=f"**El servidor ha sido abierto por {interaction.user.mention}.**\n\n"
                     f"📅 **Fecha/Hora (UTC):** {get_utc_timestamp()}\n\n"
-                    "🔹 Los miembros pueden acceder con normalidad.",
+                    "🔹 Los miembros pueden acceder con normalidad.\n\n"
+                    "🔢 **Codigo:** TgZHW",
         color=Color.green()
     )
     embed.set_footer(text=get_footer())
@@ -1079,7 +1081,7 @@ async def abrir_servidor(interaction: Interaction):
         allowed_mentions=discord.AllowedMentions(roles=True)
     )
 
-# ---------- Cerrar Servidor ----------
+# ---------- Cerrar Servidor (STAFF GENERAL) ----------
 @bot.tree.command(name="cerrar-servidor", description="Cierra el servidor (solo staff)")
 async def cerrar_servidor(interaction: Interaction):
     if not is_staff(interaction.user):
@@ -1101,9 +1103,12 @@ async def cerrar_servidor(interaction: Interaction):
         allowed_mentions=discord.AllowedMentions(roles=True)
     )
 
-# ---------- Votación (SIN COOLDOWN) ----------
-@bot.tree.command(name="votación-abrir", description="Inicia una votación para abrir el servidor")
+# ---------- Votación (STAFF GENERAL) ----------
+@bot.tree.command(name="votación-abrir", description="Inicia una votación para abrir el servidor (solo staff)")
 async def votacion_abrir(interaction: Interaction):
+    if not is_staff(interaction.user):
+        await interaction.response.send_message("No tienes permisos.", ephemeral=True)
+        return
     status = await db.get_server_status()
     if status == "abierto":
         await interaction.response.send_message("El servidor ya está abierto. No es necesario votar.", ephemeral=True)
@@ -1133,7 +1138,7 @@ async def votacion_abrir(interaction: Interaction):
     await message.add_reaction("❌")
     await message.add_reaction("⏰")
 
-# ---------- Sanciones normales ----------
+# ---------- Sanciones normales (STAFF GENERAL) ----------
 @bot.tree.command(name="sancionar", description="Aplica una sanción a un usuario por infracción de normas (MG, PG, faltas, etc.)")
 @app_commands.describe(
     usuario="Usuario a sancionar",
@@ -1248,7 +1253,7 @@ async def sancion_eliminar(interaction: Interaction, sancion_id: str):
     except Exception as e:
         await interaction.response.send_message(f"Error: {e}", ephemeral=True)
 
-# ---------- Sanciones de staff ----------
+# ---------- Sanciones de staff (SOLO FUNDADOR O SUPERIOR) ----------
 @bot.tree.command(name="sancionar-staff", description="Sanciona a un staff por incumplir la normativa interna (solo Fundador+)")
 @app_commands.describe(
     staff_member="Staff a sancionar",
@@ -1447,6 +1452,19 @@ async def citar(interaction: Interaction, usuario: discord.Member, motivo: str, 
     embed_channel.set_footer(text=get_footer())
     await channel.send(f"{usuario.mention}", embed=embed_channel)
     await interaction.response.send_message(f"Citación enviada a {usuario.mention}.", ephemeral=True)
+
+# ---------- Sincronización de comandos (solo dueño) ----------
+@bot.tree.command(name="sync", description="Sincroniza los comandos del bot (solo dueño)")
+async def sync(interaction: Interaction):
+    if interaction.user.id != Config.OWNER_ID:
+        await interaction.response.send_message("No tienes permisos para usar este comando.", ephemeral=True)
+        return
+    await interaction.response.defer(ephemeral=True)
+    try:
+        synced = await bot.tree.sync()
+        await interaction.followup.send(f"✅ Comandos sincronizados: {len(synced)}", ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"❌ Error al sincronizar: {e}", ephemeral=True)
 
 # ===================== EJECUCIÓN =====================
 if __name__ == "__main__":
