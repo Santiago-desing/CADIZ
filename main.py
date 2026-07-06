@@ -36,7 +36,7 @@ class Config:
     VERIFICADO = 1452608365795610694
     NO_VERIFICADO = 1452608365795610692
 
-    # Categorías
+    # Categorías de tickets
     CAT_TICKETS_GENERAL = 1480580609075052757
     CAT_TICKETS_FUNDACION = 1510944914718982254
     CAT_TICKETS_FACCIONES_LEGALES = 1510944986248646666
@@ -52,6 +52,7 @@ class Config:
     CH_DESPEDIDAS = 1452608366860959827
     CH_REVISIONES_VERIFICACION = 1452668749701189632
     CH_SANCIONES_PUBLICAS = 1452608367817261069
+    CH_SANCIONES_STAFF = 1453030061199589591  # NUEVO: canal para sanciones de staff
     CH_TICKETS_PRINCIPAL = 1452632044470538443
     CH_VALORACION_STAFF = 1452608367817261068
     CH_CITACIONES = 1495441610656448693
@@ -94,7 +95,7 @@ class Database:
         cursor = self.sanciones.find({"usuario_id": usuario_id}).sort("fecha", -1).limit(10)
         return await cursor.to_list(length=10)
 
-    async def get_sanciones_staff(self, staff_id):
+    async def get_sanciones_staff_emitidas(self, staff_id):
         cursor = self.sanciones.find({"staff_id": staff_id}).sort("fecha", -1).limit(10)
         return await cursor.to_list(length=10)
 
@@ -286,9 +287,6 @@ async def send_dm(user: discord.User, content: str = "", embed: Embed = None) ->
 
 async def create_ticket_channel(guild: discord.Guild, category_id: int, user: discord.Member,
                                 channel_name: str, topic: str) -> discord.TextChannel:
-    """
-    Crea un canal de ticket con nombre y topic personalizados.
-    """
     category = guild.get_channel(category_id)
     if not category:
         raise ValueError("Categoría no encontrada")
@@ -302,7 +300,6 @@ async def create_ticket_channel(guild: discord.Guild, category_id: int, user: di
     if staff_role:
         overwrites[staff_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
 
-    # Crear canal con el nombre y topic especificados
     channel = await guild.create_text_channel(
         name=channel_name,
         category=category,
@@ -437,7 +434,6 @@ class VerificationPanelView(ui.View):
             await interaction.response.send_message("Este comando solo funciona en un servidor.", ephemeral=True)
             return
         try:
-            # Nombre y topic para el ticket de verificación
             channel_name = f"ticket-verificacion-{user.name[:10]}"
             topic = f"Ticket abierto por {user.mention} a las {datetime.datetime.utcnow().strftime('%H:%M UTC')} en la categoría Verificación"
             channel = await create_ticket_channel(guild, Config.CAT_TICKETS_VERIFICACION, user, channel_name, topic)
@@ -462,7 +458,6 @@ class VerificationPanelView(ui.View):
 # --- Panel de Tickets (Select) ---
 class TicketSelectMenu(ui.Select):
     def __init__(self):
-        # Definimos opciones con nombre y valor
         self.options_data = [
             {"label": "General", "value": "general", "desc": "Cualquier consulta general", "emoji": "📩"},
             {"label": "Fundación", "value": "fundacion", "desc": "Asuntos de la fundación", "emoji": "🏛️"},
@@ -485,7 +480,6 @@ class TicketSelectMenu(ui.Select):
 
     async def callback(self, interaction: Interaction):
         selected_value = self.values[0]
-        # Buscar el nombre legible de la categoría
         selected_data = next((d for d in self.options_data if d["value"] == selected_value), None)
         if not selected_data:
             await interaction.response.send_message("Categoría no válida.", ephemeral=True)
@@ -509,10 +503,8 @@ class TicketSelectMenu(ui.Select):
         guild = interaction.guild
         user = interaction.user
         try:
-            # Generar nombre de canal: ticket-{categoria}-{usuario}
             cat_name = selected_data["label"].replace(" ", "-").lower()
             channel_name = f"ticket-{cat_name}-{user.name[:10]}"
-            # Topic con información
             topic = f"Ticket abierto por {user.mention} a las {datetime.datetime.utcnow().strftime('%H:%M UTC')} en la categoría {selected_data['label']}"
 
             channel = await create_ticket_channel(guild, category_id, user, channel_name, topic)
@@ -578,7 +570,6 @@ class TicketControlView(ui.View):
             await interaction.response.send_message(f"Este ticket ya ha sido reclamado por <@{data['claimed_by']}>.", ephemeral=True)
             return
         data["claimed_by"] = interaction.user.id
-        # NO se cambia el nombre del canal
         embed = Embed(
             title="📌 Ticket reclamado",
             description=f"**{interaction.user.mention}** ha reclamado este ticket y se hará cargo del caso.\n"
@@ -1134,8 +1125,8 @@ async def votacion_abrir(interaction: Interaction):
     await message.add_reaction("❌")
     await message.add_reaction("⏰")
 
-# ---------- Sanciones ----------
-@bot.tree.command(name="sancionar", description="Aplica una sanción a un usuario")
+# ---------- SANCIONES NORMALES (para cualquier usuario) ----------
+@bot.tree.command(name="sancionar", description="Aplica una sanción a un usuario por infracción de normas (MG, PG, faltas, etc.)")
 @app_commands.describe(
     usuario="Usuario a sancionar",
     motivo="Motivo de la sanción",
@@ -1168,6 +1159,7 @@ async def sancionar(interaction: Interaction, usuario: discord.Member, motivo: s
             observaciones=observaciones
         )
 
+        # DM al usuario
         embed_dm = Embed(
             title="📜 Has recibido una sanción",
             description=f"**{usuario.mention}**, has sido sancionado en **Cádiz RP**.\n\n"
@@ -1184,6 +1176,7 @@ async def sancionar(interaction: Interaction, usuario: discord.Member, motivo: s
         embed_dm.set_footer(text=get_footer())
         await send_dm(usuario, "", embed=embed_dm)
 
+        # Mensaje público en el canal de sanciones públicas
         guild = interaction.guild
         if guild:
             channel = guild.get_channel(Config.CH_SANCIONES_PUBLICAS)
@@ -1205,7 +1198,7 @@ async def sancionar(interaction: Interaction, usuario: discord.Member, motivo: s
     except Exception as e:
         await interaction.response.send_message(f"Error: {e}", ephemeral=True)
 
-@bot.tree.command(name="sanciones-ver", description="Ver sanciones de un usuario")
+@bot.tree.command(name="sanciones-ver", description="Ver las sanciones que ha recibido un usuario")
 @app_commands.describe(usuario="Usuario del cual ver sanciones")
 async def sanciones_ver(interaction: Interaction, usuario: discord.Member):
     try:
@@ -1225,7 +1218,7 @@ async def sanciones_ver(interaction: Interaction, usuario: discord.Member):
             fecha = s["fecha"].strftime("%d/%m/%Y %H:%M")
             embed.add_field(
                 name=f"ID {str(s['_id'])[:8]} - {s['tipo']}",
-                value=f"Motivo: {s['motivo']}\nStaff: {s['staff_nombre']}\nFecha: {fecha}",
+                value=f"Motivo: {s['motivo']}\nStaff que sanciona: {s['staff_nombre']}\nFecha: {fecha}",
                 inline=False
             )
         embed.set_footer(text=get_footer())
@@ -1233,7 +1226,7 @@ async def sanciones_ver(interaction: Interaction, usuario: discord.Member):
     except Exception as e:
         await interaction.response.send_message(f"Error: {e}", ephemeral=True)
 
-@bot.tree.command(name="sancion-eliminar", description="Eliminar una sanción por ID")
+@bot.tree.command(name="sancion-eliminar", description="Eliminar una sanción por su ID")
 @app_commands.describe(sancion_id="ID de la sanción a eliminar (el que se muestra en el embed)")
 async def sancion_eliminar(interaction: Interaction, sancion_id: str):
     try:
@@ -1248,13 +1241,14 @@ async def sancion_eliminar(interaction: Interaction, sancion_id: str):
     except Exception as e:
         await interaction.response.send_message(f"Error: {e}", ephemeral=True)
 
-@bot.tree.command(name="sancionar-staff", description="Sancionar a un miembro del staff (solo Fundador+)")
+# ---------- SANCIONES DE STAFF (solo Fundador+ puede aplicar) ----------
+@bot.tree.command(name="sancionar-staff", description="Sanciona a un staff por incumplir la normativa interna (solo Fundador+)")
 @app_commands.describe(
     staff_member="Staff a sancionar",
-    motivo="Motivo",
+    motivo="Motivo de la sanción",
     tipo="Tipo de sanción",
-    pruebas="Pruebas",
-    observaciones="Observaciones"
+    pruebas="Enlace a pruebas (opcional)",
+    observaciones="Observaciones adicionales (opcional)"
 )
 @app_commands.choices(
     tipo=[
@@ -1273,6 +1267,7 @@ async def sancionar_staff(interaction: Interaction, staff_member: discord.Member
         if not is_staff(staff_member):
             await interaction.response.send_message("El usuario no es miembro del staff.", ephemeral=True)
             return
+
         sancion_id = await db.add_sancion(
             usuario_id=staff_member.id,
             usuario_nombre=staff_member.display_name,
@@ -1283,6 +1278,8 @@ async def sancionar_staff(interaction: Interaction, staff_member: discord.Member
             pruebas=pruebas,
             observaciones=observaciones
         )
+
+        # DM al staff sancionado
         embed_dm = Embed(
             title="📜 Sanción de staff",
             description=f"Has recibido una sanción por parte de la dirección.\n"
@@ -1291,30 +1288,57 @@ async def sancionar_staff(interaction: Interaction, staff_member: discord.Member
         )
         embed_dm.set_footer(text=get_footer())
         await send_dm(staff_member, "", embed=embed_dm)
+
+        # Mensaje público en el canal de sanciones de staff
+        guild = interaction.guild
+        if guild:
+            channel = guild.get_channel(Config.CH_SANCIONES_STAFF)
+            if channel:
+                embed_public = Embed(
+                    title="⚖️ Sanción a staff",
+                    description=f"**Staff sancionado:** {staff_member.mention}\n"
+                                f"**Staff que sanciona:** {interaction.user.mention}\n"
+                                f"**Motivo:** {motivo}\n"
+                                f"**Tipo:** {tipo.value}\n"
+                                f"**Pruebas:** {pruebas}\n"
+                                f"**Observaciones:** {observaciones}\n"
+                                f"**ID de sanción:** {sancion_id}",
+                    color=Color.orange()
+                )
+                embed_public.set_footer(text=get_footer())
+                await channel.send(embed=embed_public)
+
         await interaction.response.send_message(f"Sanción de staff aplicada a {staff_member.display_name}. ID: {sancion_id}", ephemeral=True)
     except Exception as e:
         await interaction.response.send_message(f"Error: {e}", ephemeral=True)
 
-@bot.tree.command(name="ver-sanciones-staff", description="Ver sanciones aplicadas por un staff (solo Fundador+)")
-@app_commands.describe(staff_member="Staff del cual ver sanciones emitidas")
+@bot.tree.command(name="ver-sanciones-staff", description="Ver las sanciones que ha recibido un staff (solo Fundador+)")
+@app_commands.describe(staff_member="Staff del cual ver sanciones recibidas")
 async def ver_sanciones_staff(interaction: Interaction, staff_member: discord.Member):
     try:
         if not is_fundador_or_higher(interaction.user):
             await interaction.response.send_message("No tienes permisos.", ephemeral=True)
             return
-        sanciones = await db.get_sanciones_staff(staff_member.id)
-        if not sanciones:
-            await interaction.response.send_message(f"{staff_member.display_name} no ha emitido sanciones.", ephemeral=True)
+        if not is_staff(staff_member):
+            await interaction.response.send_message("El usuario no es miembro del staff.", ephemeral=True)
             return
+
+        # Obtener sanciones recibidas por este staff (no emitidas)
+        sanciones = await db.get_sanciones_usuario(staff_member.id)
+
+        if not sanciones:
+            await interaction.response.send_message(f"{staff_member.display_name} no tiene sanciones de staff recibidas.", ephemeral=True)
+            return
+
         embed = Embed(
-            title=f"📋 Sanciones emitidas por {staff_member.display_name}",
+            title=f"📋 Sanciones recibidas por {staff_member.display_name}",
             color=Color.blue()
         )
         for s in sanciones:
             fecha = s["fecha"].strftime("%d/%m/%Y %H:%M")
             embed.add_field(
                 name=f"ID {str(s['_id'])[:8]} - {s['tipo']}",
-                value=f"Usuario: {s['usuario_nombre']}\nMotivo: {s['motivo']}\nFecha: {fecha}",
+                value=f"Motivo: {s['motivo']}\nStaff que sanciona: {s['staff_nombre']}\nFecha: {fecha}",
                 inline=False
             )
         embed.set_footer(text=get_footer())
@@ -1322,7 +1346,7 @@ async def ver_sanciones_staff(interaction: Interaction, staff_member: discord.Me
     except Exception as e:
         await interaction.response.send_message(f"Error: {e}", ephemeral=True)
 
-@bot.tree.command(name="eliminar-sancion-staff", description="Eliminar una sanción de staff por ID (solo Fundador+)")
+@bot.tree.command(name="eliminar-sancion-staff", description="Eliminar una sanción de staff por su ID (solo Fundador+)")
 @app_commands.describe(sancion_id="ID de la sanción a eliminar")
 async def eliminar_sancion_staff(interaction: Interaction, sancion_id: str):
     try:
@@ -1331,12 +1355,13 @@ async def eliminar_sancion_staff(interaction: Interaction, sancion_id: str):
             return
         success = await db.eliminar_sancion(sancion_id)
         if success:
-            await interaction.response.send_message(f"Sanción ID `{sancion_id}` eliminada.", ephemeral=True)
+            await interaction.response.send_message(f"Sanción de staff ID `{sancion_id}` eliminada.", ephemeral=True)
         else:
             await interaction.response.send_message(f"No se encontró la sanción con ID `{sancion_id}`.", ephemeral=True)
     except Exception as e:
         await interaction.response.send_message(f"Error: {e}", ephemeral=True)
 
+# ---------- Informe Staff ----------
 @bot.tree.command(name="informe-staff", description="Genera un informe de sanciones emitidas por cada staff (solo Fundador+)")
 async def informe_staff(interaction: Interaction):
     try:
