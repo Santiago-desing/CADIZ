@@ -37,7 +37,7 @@ class Config:
     VERIFICADO = 1452608365795610694
     NO_VERIFICADO = 1452608365795610692
 
-    # Categorías de tickets (TODAS las que debe permitir cerrar)
+    # Categorías de tickets
     CAT_TICKETS_GENERAL = 1480580609075052757
     CAT_TICKETS_FUNDACION = 1510944914718982254
     CAT_TICKETS_FACCIONES_LEGALES = 1510944986248646666
@@ -48,7 +48,6 @@ class Config:
     CAT_TICKETS_INCIDENCIAS_TECNICAS = 1510945373143699457
     CAT_TICKETS_VERIFICACION = 1516371570921046088
 
-    # Lista de todas las categorías de tickets (para facilitar comprobaciones)
     TICKET_CATEGORIES = [
         CAT_TICKETS_GENERAL,
         CAT_TICKETS_FUNDACION,
@@ -71,6 +70,17 @@ class Config:
     CH_VALORACION_STAFF = 1452608367817261068
     CH_CITACIONES = 1495441610656448693
     CH_VERIFICACION_PANEL = 1505926635239768074
+
+    # Logs
+    LOG_GENERAL = 1489589357580128436
+    LOG_MODERACION = 1489589289778941962
+    LOG_EMOJIS = 1489589189954506772
+    LOG_ROLES = 1489589108786331799
+    LOG_MIEMBROS = 1489589153485029536
+    LOG_CANALES = 1489589238335803422
+    LOG_INVITACIONES = 1489589554032676884
+    LOG_MENSAJES = 1489588046910459904
+    LOG_TICKETS = 1489661308931674292
 
     VERIFICATION_TIMEOUT = 1800
     SERVER_LOGO = "https://i.imgur.com/placeholder.png"
@@ -142,11 +152,198 @@ class Database:
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
+intents.emojis = True
+intents.bans = True
+intents.invites = True
+intents.guilds = True
+intents.moderation = True
+intents.reactions = True
+intents.voice_states = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 db = Database(Config.MONGO_URI)
 verification_sessions: Dict[int, dict] = {}
 ticket_data: Dict[int, dict] = {}
+
+# ===================== LOGGER =====================
+class Logger:
+    @staticmethod
+    async def send_log(guild: discord.Guild, channel_id: int, embed: Embed):
+        channel = guild.get_channel(channel_id)
+        if channel:
+            try:
+                await channel.send(embed=embed)
+            except:
+                pass
+
+    @staticmethod
+    async def log_general(guild: discord.Guild, title: str, description: str, color: Color = Color.blue()):
+        embed = Embed(title=title, description=description, color=color, timestamp=datetime.datetime.utcnow())
+        embed.set_footer(text=get_footer())
+        await Logger.send_log(guild, Config.LOG_GENERAL, embed)
+
+    @staticmethod
+    async def log_moderacion(guild: discord.Guild, title: str, description: str, color: Color = Color.red()):
+        embed = Embed(title=title, description=description, color=color, timestamp=datetime.datetime.utcnow())
+        embed.set_footer(text=get_footer())
+        await Logger.send_log(guild, Config.LOG_MODERACION, embed)
+
+    @staticmethod
+    async def log_emojis(guild: discord.Guild, title: str, description: str, color: Color = Color.gold()):
+        embed = Embed(title=title, description=description, color=color, timestamp=datetime.datetime.utcnow())
+        embed.set_footer(text=get_footer())
+        await Logger.send_log(guild, Config.LOG_EMOJIS, embed)
+
+    @staticmethod
+    async def log_roles(guild: discord.Guild, title: str, description: str, color: Color = Color.purple()):
+        embed = Embed(title=title, description=description, color=color, timestamp=datetime.datetime.utcnow())
+        embed.set_footer(text=get_footer())
+        await Logger.send_log(guild, Config.LOG_ROLES, embed)
+
+    @staticmethod
+    async def log_miembros(guild: discord.Guild, title: str, description: str, color: Color = Color.green()):
+        embed = Embed(title=title, description=description, color=color, timestamp=datetime.datetime.utcnow())
+        embed.set_footer(text=get_footer())
+        await Logger.send_log(guild, Config.LOG_MIEMBROS, embed)
+
+    @staticmethod
+    async def log_canales(guild: discord.Guild, title: str, description: str, color: Color = Color.teal()):
+        embed = Embed(title=title, description=description, color=color, timestamp=datetime.datetime.utcnow())
+        embed.set_footer(text=get_footer())
+        await Logger.send_log(guild, Config.LOG_CANALES, embed)
+
+    @staticmethod
+    async def log_invitaciones(guild: discord.Guild, title: str, description: str, color: Color = Color.dark_teal()):
+        embed = Embed(title=title, description=description, color=color, timestamp=datetime.datetime.utcnow())
+        embed.set_footer(text=get_footer())
+        await Logger.send_log(guild, Config.LOG_INVITACIONES, embed)
+
+    @staticmethod
+    async def log_mensajes(guild: discord.Guild, title: str, description: str, color: Color = Color.orange()):
+        embed = Embed(title=title, description=description, color=color, timestamp=datetime.datetime.utcnow())
+        embed.set_footer(text=get_footer())
+        await Logger.send_log(guild, Config.LOG_MENSAJES, embed)
+
+    @staticmethod
+    async def log_tickets(guild: discord.Guild, title: str, description: str, color: Color = Color.blurple()):
+        embed = Embed(title=title, description=description, color=color, timestamp=datetime.datetime.utcnow())
+        embed.set_footer(text=get_footer())
+        await Logger.send_log(guild, Config.LOG_TICKETS, embed)
+
+    @staticmethod
+    async def archive_ticket(channel: discord.TextChannel, closer: discord.Member):
+        guild = channel.guild
+        messages = []
+        async for msg in channel.history(limit=2000, oldest_first=True):
+            attachments = [a.url for a in msg.attachments]
+            attachments_str = ", ".join(attachments) if attachments else "Ninguno"
+            messages.append(
+                f"**{msg.author}** ({msg.author.id}) | {msg.created_at.strftime('%d/%m/%Y %H:%M:%S')}\n"
+                f"{msg.content if msg.content else '(Sin contenido)'}\n"
+                f"📎 Adjuntos: {attachments_str}\n"
+                f"---"
+            )
+
+        transcript = "\n".join(messages)
+        if len(transcript) > 4000:
+            transcript = transcript[:4000] + "\n... (truncado)"
+        embed = Embed(
+            title=f"📄 Transcripción de {channel.name}",
+            description=f"**Canal:** {channel.mention}\n**Categoría:** {channel.category.name if channel.category else 'Sin categoría'}\n"
+                        f"**Cerrado por:** {closer.mention} ({closer.id})\n"
+                        f"**Total de mensajes:** {len(messages)}",
+            color=Color.blurple(),
+            timestamp=datetime.datetime.utcnow()
+        )
+        embed.add_field(name="Transcripción", value=transcript, inline=False)
+        embed.set_footer(text=get_footer())
+        await Logger.send_log(guild, Config.LOG_TICKETS, embed)
+
+# ===================== UTILIDADES =====================
+def is_staff(member: discord.Member) -> bool:
+    if not member.guild:
+        return False
+    staff_role = member.guild.get_role(Config.STAFF_GENERAL)
+    return staff_role in member.roles
+
+def is_fundador_or_higher(member: discord.Member) -> bool:
+    roles_ids = [Config.FUNDADOR, Config.CO_FUNDADOR, Config.CO_DUENO, Config.DUENO, Config.PROPIETARIO]
+    member_roles = [r.id for r in member.roles]
+    return any(r_id in member_roles for r_id in roles_ids)
+
+def is_owner_or_dueno(member: discord.Member) -> bool:
+    if member.id == Config.OWNER_ID:
+        return True
+    roles_ids = [Config.PROPIETARIO, Config.DUENO]
+    member_roles = [r.id for r in member.roles]
+    return any(r_id in member_roles for r_id in roles_ids)
+
+def is_ticket_channel(channel: discord.TextChannel) -> bool:
+    if not channel.category:
+        return False
+    return channel.category.id in Config.TICKET_CATEGORIES
+
+def get_utc_timestamp():
+    return datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+
+def get_footer():
+    return f"© Cádiz RP • {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')}"
+
+async def send_dm(user: discord.User, content: str = "", embed: Embed = None) -> bool:
+    try:
+        if embed:
+            await user.send(content, embed=embed)
+        else:
+            await user.send(content)
+        return True
+    except discord.Forbidden:
+        return False
+
+async def create_ticket_channel(guild: discord.Guild, category_id: int, user: discord.Member,
+                                channel_name: str, topic: str) -> discord.TextChannel:
+    category = guild.get_channel(category_id)
+    if not category:
+        raise ValueError("Categoría no encontrada")
+
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(read_messages=False),
+        user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
+        guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
+    }
+    staff_role = guild.get_role(Config.STAFF_GENERAL)
+    if staff_role:
+        overwrites[staff_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+
+    channel = await guild.create_text_channel(
+        name=channel_name,
+        category=category,
+        overwrites=overwrites,
+        topic=topic
+    )
+    return channel
+
+async def check_roblox_user(username: str) -> Optional[int]:
+    url = "https://users.roblox.com/v1/usernames/users"
+    payload = {"usernames": [username]}
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, json=payload) as resp:
+            if resp.status != 200:
+                return None
+            data = await resp.json()
+            if data.get("data") and len(data["data"]) > 0:
+                return data["data"][0]["id"]
+            return None
+
+async def get_roblox_avatar(user_id: int) -> Optional[str]:
+    url = f"https://thumbnails.roblox.com/v1/users/avatar?userIds={user_id}&size=420x420&format=Png"
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as resp:
+            if resp.status != 200:
+                return None
+            data = await resp.json()
+            if data.get("data") and len(data["data"]) > 0:
+                return data["data"][0]["imageUrl"]
+            return None
 
 # ===================== EVALUADOR DE VERIFICACIÓN =====================
 class VerificationEvaluator:
@@ -270,93 +467,6 @@ class VerificationEvaluator:
             "decision": decision,
             "motivo": motivo
         }
-
-# ===================== UTILIDADES =====================
-def is_staff(member: discord.Member) -> bool:
-    if not member.guild:
-        return False
-    staff_role = member.guild.get_role(Config.STAFF_GENERAL)
-    return staff_role in member.roles
-
-def is_fundador_or_higher(member: discord.Member) -> bool:
-    roles_ids = [Config.FUNDADOR, Config.CO_FUNDADOR, Config.CO_DUENO, Config.DUENO, Config.PROPIETARIO]
-    member_roles = [r.id for r in member.roles]
-    return any(r_id in member_roles for r_id in roles_ids)
-
-def is_owner_or_dueno(member: discord.Member) -> bool:
-    if member.id == Config.OWNER_ID:
-        return True
-    roles_ids = [Config.PROPIETARIO, Config.DUENO]
-    member_roles = [r.id for r in member.roles]
-    return any(r_id in member_roles for r_id in roles_ids)
-
-def is_ticket_channel(channel: discord.TextChannel) -> bool:
-    """Comprueba si el canal pertenece a una categoría de tickets."""
-    if not channel.category:
-        return False
-    return channel.category.id in Config.TICKET_CATEGORIES
-
-def get_utc_timestamp():
-    return datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
-
-def get_footer():
-    return f"© Cádiz RP • {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')}"
-
-async def send_dm(user: discord.User, content: str = "", embed: Embed = None) -> bool:
-    try:
-        if embed:
-            await user.send(content, embed=embed)
-        else:
-            await user.send(content)
-        return True
-    except discord.Forbidden:
-        return False
-
-async def create_ticket_channel(guild: discord.Guild, category_id: int, user: discord.Member,
-                                channel_name: str, topic: str) -> discord.TextChannel:
-    category = guild.get_channel(category_id)
-    if not category:
-        raise ValueError("Categoría no encontrada")
-
-    overwrites = {
-        guild.default_role: discord.PermissionOverwrite(read_messages=False),
-        user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
-        guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
-    }
-    staff_role = guild.get_role(Config.STAFF_GENERAL)
-    if staff_role:
-        overwrites[staff_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
-
-    channel = await guild.create_text_channel(
-        name=channel_name,
-        category=category,
-        overwrites=overwrites,
-        topic=topic
-    )
-    return channel
-
-async def check_roblox_user(username: str) -> Optional[int]:
-    url = "https://users.roblox.com/v1/usernames/users"
-    payload = {"usernames": [username]}
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, json=payload) as resp:
-            if resp.status != 200:
-                return None
-            data = await resp.json()
-            if data.get("data") and len(data["data"]) > 0:
-                return data["data"][0]["id"]
-            return None
-
-async def get_roblox_avatar(user_id: int) -> Optional[str]:
-    url = f"https://thumbnails.roblox.com/v1/users/avatar?userIds={user_id}&size=420x420&format=Png"
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as resp:
-            if resp.status != 200:
-                return None
-            data = await resp.json()
-            if data.get("data") and len(data["data"]) > 0:
-                return data["data"][0]["imageUrl"]
-            return None
 
 # ===================== VIEWS =====================
 
@@ -606,7 +716,7 @@ class TicketPanelView(ui.View):
         super().__init__(timeout=None)
         self.add_item(TicketSelectMenu())
 
-# --- Control de Tickets (MEJORADO: cierre por categoría) ---
+# --- Control de Tickets (con archivado) ---
 class TicketControlView(ui.View):
     def __init__(self, channel_id: int):
         super().__init__(timeout=None)
@@ -621,12 +731,11 @@ class TicketControlView(ui.View):
         if channel.id != self.channel_id:
             await interaction.response.send_message("Este botón no pertenece a este canal.", ephemeral=True)
             return
-        # Verificar si el canal es realmente un ticket (por categoría)
         if not is_ticket_channel(channel):
             await interaction.response.send_message("Este canal no es un ticket válido.", ephemeral=True)
             return
+        await Logger.archive_ticket(channel, interaction.user)
         await interaction.response.send_message("Cerrando ticket...")
-        # Eliminar de ticket_data si existe
         ticket_data.pop(channel.id, None)
         await channel.delete()
 
@@ -644,7 +753,6 @@ class TicketControlView(ui.View):
             return
         data = ticket_data.get(self.channel_id)
         if not data:
-            # Si no está en memoria, lo creamos para poder reclamarlo
             ticket_data[self.channel_id] = {"owner_id": None, "claimed_by": None, "locked": False}
             data = ticket_data[self.channel_id]
         if data["claimed_by"]:
@@ -682,8 +790,6 @@ class TicketControlView(ui.View):
             return
         data["locked"] = True
         guild = interaction.guild
-        # Intentar obtener el propietario del ticket desde el topic o del primer mensaje, pero si no está en memoria, no podemos bloquear a nadie
-        # En su lugar, bloqueamos el permiso de escritura a @everyone y lo dejamos solo para staff y bot
         overwrites = channel.overwrites
         for target, overwrite in overwrites.items():
             if isinstance(target, discord.Role) and target == guild.default_role:
@@ -723,7 +829,6 @@ class TicketControlView(ui.View):
             return
         data["locked"] = False
         guild = interaction.guild
-        # Restaurar permisos: dar permiso de escritura a @everyone y al propietario (si se conoce)
         overwrites = channel.overwrites
         for target, overwrite in overwrites.items():
             if isinstance(target, discord.Role) and target == guild.default_role:
@@ -741,7 +846,7 @@ class TicketControlView(ui.View):
         await channel.send(embed=embed)
         await interaction.response.send_message("Ticket desbloqueado.", ephemeral=True)
 
-# --- Revisión de Verificación (con botones Aceptar/Denegar) ---
+# --- Revisión de Verificación ---
 class VerificationReviewView(ui.View):
     def __init__(self, user_id: int, roblox_name: str, roblox_id: int, answers: dict, analysis: dict):
         super().__init__(timeout=None)
@@ -826,7 +931,8 @@ class VerificationReviewView(ui.View):
         await interaction.message.edit(embed=embed_original, view=None)
         await interaction.response.send_message("Verificación denegada.", ephemeral=True)
 
-# ===================== EVENTOS =====================
+# ===================== EVENTOS DE LOGS =====================
+
 @bot.event
 async def on_ready():
     await db.init()
@@ -838,32 +944,343 @@ async def on_ready():
         print(f"Error al sincronizar comandos: {e}")
 
 @bot.event
-async def on_member_join(member: discord.Member):
-    guild = member.guild
-    channel = guild.get_channel(Config.CH_BIENVENIDAS)
-    if not channel:
-        return
-    human_members = sum(1 for m in guild.members if not m.bot)
+async def on_member_join(member):
     embed = Embed(
-        title="👋 ¡Bienvenido/a a Cádiz RP!",
-        description=f"**{member.mention}**, te damos la bienvenida a **Cádiz RP**.\n\n"
-                    "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                    "📌 **Pasos principales:**\n\n"
-                    "1️⃣ **Verifícate** en el canal <#1505926635239768074>.\n"
-                    "2️⃣ **Crea tu DNI** en <#1452608368069054480>.\n"
-                    "3️⃣ **Lee las normas** en <#1452608366860959830>.\n"
-                    "4️⃣ **¡Empieza a rolear!**\n"
-                    "Tenemos trabajos: Policía, Emergencias, Conservación, Criminal y más.\n\n"
-                    "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                    "🎟️ **¿Problemas?** Abre un ticket en <#1452632044470538443>.\n\n"
-                    f"📊 **Miembros humanos:** {human_members}\n"
-                    "¡Disfruta del servidor!",
-        color=Color.gold()
+        title="👤 Miembro unido",
+        description=f"**Usuario:** {member.mention} ({member.id})\n"
+                    f"**Cuenta creada:** {member.created_at.strftime('%d/%m/%Y %H:%M:%S')}",
+        color=Color.green(),
+        timestamp=datetime.datetime.utcnow()
     )
     embed.set_thumbnail(url=member.display_avatar.url)
     embed.set_footer(text=get_footer())
-    await channel.send(embed=embed)
+    await Logger.send_log(member.guild, Config.LOG_MIEMBROS, embed)
 
+    # También enviar mensaje de bienvenida
+    guild = member.guild
+    channel = guild.get_channel(Config.CH_BIENVENIDAS)
+    if channel:
+        human_members = sum(1 for m in guild.members if not m.bot)
+        embed_bienvenida = Embed(
+            title="👋 ¡Bienvenido/a a Cádiz RP!",
+            description=f"**{member.mention}**, te damos la bienvenida a **Cádiz RP**.\n\n"
+                        "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                        "📌 **Pasos principales:**\n\n"
+                        "1️⃣ **Verifícate** en el canal <#1505926635239768074>.\n"
+                        "2️⃣ **Crea tu DNI** en <#1452608368069054480>.\n"
+                        "3️⃣ **Lee las normas** en <#1452608366860959830>.\n"
+                        "4️⃣ **¡Empieza a rolear!**\n"
+                        "Tenemos trabajos: Policía, Emergencias, Conservación, Criminal y más.\n\n"
+                        "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                        "🎟️ **¿Problemas?** Abre un ticket en <#1452632044470538443>.\n\n"
+                        f"📊 **Miembros humanos:** {human_members}\n"
+                        "¡Disfruta del servidor!",
+            color=Color.gold()
+        )
+        embed_bienvenida.set_thumbnail(url=member.display_avatar.url)
+        embed_bienvenida.set_footer(text=get_footer())
+        await channel.send(embed=embed_bienvenida)
+
+@bot.event
+async def on_member_remove(member):
+    embed = Embed(
+        title="👤 Miembro salido",
+        description=f"**Usuario:** {member.mention} ({member.id})\n"
+                    f"**Rol más alto:** {member.top_role.mention if member.top_role else 'Ninguno'}",
+        color=Color.red(),
+        timestamp=datetime.datetime.utcnow()
+    )
+    embed.set_thumbnail(url=member.display_avatar.url)
+    embed.set_footer(text=get_footer())
+    await Logger.send_log(member.guild, Config.LOG_MIEMBROS, embed)
+
+@bot.event
+async def on_member_update(before, after):
+    if before.guild is None:
+        return
+    if before.nick != after.nick:
+        embed = Embed(
+            title="✏️ Apodo cambiado",
+            description=f"**Usuario:** {after.mention} ({after.id})\n"
+                        f"**Antes:** {before.nick if before.nick else 'Ninguno'}\n"
+                        f"**Después:** {after.nick if after.nick else 'Ninguno'}",
+            color=Color.blue(),
+            timestamp=datetime.datetime.utcnow()
+        )
+        embed.set_footer(text=get_footer())
+        await Logger.send_log(after.guild, Config.LOG_MIEMBROS, embed)
+
+    if before.roles != after.roles:
+        added = [r for r in after.roles if r not in before.roles]
+        removed = [r for r in before.roles if r not in after.roles]
+        desc = f"**Usuario:** {after.mention} ({after.id})\n"
+        if added:
+            desc += f"**Roles añadidos:** {', '.join([r.mention for r in added])}\n"
+        if removed:
+            desc += f"**Roles eliminados:** {', '.join([r.mention for r in removed])}"
+        embed = Embed(
+            title="🔄 Roles actualizados",
+            description=desc,
+            color=Color.gold(),
+            timestamp=datetime.datetime.utcnow()
+        )
+        embed.set_footer(text=get_footer())
+        await Logger.send_log(after.guild, Config.LOG_MIEMBROS, embed)
+
+@bot.event
+async def on_guild_role_create(role):
+    embed = Embed(
+        title="➕ Rol creado",
+        description=f"**Nombre:** {role.mention} ({role.id})\n"
+                    f"**Color:** {role.color}\n"
+                    f"**Mencionable:** {role.mentionable}",
+        color=Color.green(),
+        timestamp=datetime.datetime.utcnow()
+    )
+    embed.set_footer(text=get_footer())
+    await Logger.send_log(role.guild, Config.LOG_ROLES, embed)
+
+@bot.event
+async def on_guild_role_delete(role):
+    embed = Embed(
+        title="➖ Rol eliminado",
+        description=f"**Nombre:** {role.name} ({role.id})\n"
+                    f"**Color:** {role.color}",
+        color=Color.red(),
+        timestamp=datetime.datetime.utcnow()
+    )
+    embed.set_footer(text=get_footer())
+    await Logger.send_log(role.guild, Config.LOG_ROLES, embed)
+
+@bot.event
+async def on_guild_role_update(before, after):
+    changes = []
+    if before.name != after.name:
+        changes.append(f"**Nombre:** {before.name} → {after.name}")
+    if before.color != after.color:
+        changes.append(f"**Color:** {before.color} → {after.color}")
+    if before.mentionable != after.mentionable:
+        changes.append(f"**Mencionable:** {before.mentionable} → {after.mentionable}")
+    if changes:
+        embed = Embed(
+            title="🔄 Rol actualizado",
+            description=f"**Rol:** {after.mention} ({after.id})\n" + "\n".join(changes),
+            color=Color.blue(),
+            timestamp=datetime.datetime.utcnow()
+        )
+        embed.set_footer(text=get_footer())
+        await Logger.send_log(after.guild, Config.LOG_ROLES, embed)
+
+@bot.event
+async def on_guild_emojis_update(guild, before, after):
+    added = [e for e in after if e not in before]
+    removed = [e for e in before if e not in after]
+    for emoji in added:
+        embed = Embed(
+            title="➕ Emoji creado",
+            description=f"**Nombre:** {emoji.name} ({emoji.id})\n"
+                        f"**Animado:** {emoji.animated}",
+            color=Color.green(),
+            timestamp=datetime.datetime.utcnow()
+        )
+        embed.set_thumbnail(url=str(emoji.url))
+        embed.set_footer(text=get_footer())
+        await Logger.send_log(guild, Config.LOG_EMOJIS, embed)
+    for emoji in removed:
+        embed = Embed(
+            title="➖ Emoji eliminado",
+            description=f"**Nombre:** {emoji.name} ({emoji.id})",
+            color=Color.red(),
+            timestamp=datetime.datetime.utcnow()
+        )
+        embed.set_footer(text=get_footer())
+        await Logger.send_log(guild, Config.LOG_EMOJIS, embed)
+
+@bot.event
+async def on_reaction_add(reaction, user):
+    if user.bot:
+        return
+    if reaction.message.guild is None:
+        return
+    embed = Embed(
+        title="➕ Reacción añadida",
+        description=f"**Usuario:** {user.mention} ({user.id})\n"
+                    f"**Mensaje:** [Ir al mensaje]({reaction.message.jump_url})\n"
+                    f"**Reacción:** {reaction.emoji}",
+        color=Color.green(),
+        timestamp=datetime.datetime.utcnow()
+    )
+    embed.set_footer(text=get_footer())
+    await Logger.send_log(reaction.message.guild, Config.LOG_EMOJIS, embed)
+
+@bot.event
+async def on_reaction_remove(reaction, user):
+    if user.bot:
+        return
+    if reaction.message.guild is None:
+        return
+    embed = Embed(
+        title="➖ Reacción eliminada",
+        description=f"**Usuario:** {user.mention} ({user.id})\n"
+                    f"**Mensaje:** [Ir al mensaje]({reaction.message.jump_url})\n"
+                    f"**Reacción:** {reaction.emoji}",
+        color=Color.red(),
+        timestamp=datetime.datetime.utcnow()
+    )
+    embed.set_footer(text=get_footer())
+    await Logger.send_log(reaction.message.guild, Config.LOG_EMOJIS, embed)
+
+@bot.event
+async def on_guild_channel_create(channel):
+    embed = Embed(
+        title="➕ Canal creado",
+        description=f"**Nombre:** {channel.mention} ({channel.id})\n"
+                    f"**Tipo:** {channel.type}\n"
+                    f"**Categoría:** {channel.category.name if channel.category else 'Ninguna'}",
+        color=Color.green(),
+        timestamp=datetime.datetime.utcnow()
+    )
+    embed.set_footer(text=get_footer())
+    await Logger.send_log(channel.guild, Config.LOG_CANALES, embed)
+
+@bot.event
+async def on_guild_channel_delete(channel):
+    embed = Embed(
+        title="➖ Canal eliminado",
+        description=f"**Nombre:** {channel.name} ({channel.id})\n"
+                    f"**Tipo:** {channel.type}\n"
+                    f"**Categoría:** {channel.category.name if channel.category else 'Ninguna'}",
+        color=Color.red(),
+        timestamp=datetime.datetime.utcnow()
+    )
+    embed.set_footer(text=get_footer())
+    await Logger.send_log(channel.guild, Config.LOG_CANALES, embed)
+
+@bot.event
+async def on_guild_channel_update(before, after):
+    changes = []
+    if before.name != after.name:
+        changes.append(f"**Nombre:** {before.name} → {after.name}")
+    if before.category != after.category:
+        changes.append(f"**Categoría:** {before.category.name if before.category else 'Ninguna'} → {after.category.name if after.category else 'Ninguna'}")
+    if changes:
+        embed = Embed(
+            title="🔄 Canal actualizado",
+            description=f"**Canal:** {after.mention} ({after.id})\n" + "\n".join(changes),
+            color=Color.blue(),
+            timestamp=datetime.datetime.utcnow()
+        )
+        embed.set_footer(text=get_footer())
+        await Logger.send_log(after.guild, Config.LOG_CANALES, embed)
+
+@bot.event
+async def on_invite_create(invite):
+    embed = Embed(
+        title="➕ Invitación creada",
+        description=f"**Creador:** {invite.inviter.mention if invite.inviter else 'Desconocido'}\n"
+                    f"**Código:** {invite.code}\n"
+                    f"**Canal:** {invite.channel.mention}\n"
+                    f"**Usos máximos:** {invite.max_uses if invite.max_uses else 'Ilimitado'}\n"
+                    f"**Expira:** {invite.expires_at.strftime('%d/%m/%Y %H:%M') if invite.expires_at else 'Nunca'}",
+        color=Color.green(),
+        timestamp=datetime.datetime.utcnow()
+    )
+    embed.set_footer(text=get_footer())
+    await Logger.send_log(invite.guild, Config.LOG_INVITACIONES, embed)
+
+@bot.event
+async def on_invite_delete(invite):
+    embed = Embed(
+        title="➖ Invitación eliminada",
+        description=f"**Código:** {invite.code}\n"
+                    f"**Canal:** {invite.channel.mention if invite.channel else 'Desconocido'}\n"
+                    f"**Usos:** {invite.uses}",
+        color=Color.red(),
+        timestamp=datetime.datetime.utcnow()
+    )
+    embed.set_footer(text=get_footer())
+    await Logger.send_log(invite.guild, Config.LOG_INVITACIONES, embed)
+
+@bot.event
+async def on_member_ban(guild, user):
+    embed = Embed(
+        title="🔨 Usuario baneado",
+        description=f"**Usuario:** {user.mention} ({user.id})",
+        color=Color.dark_red(),
+        timestamp=datetime.datetime.utcnow()
+    )
+    embed.set_footer(text=get_footer())
+    await Logger.send_log(guild, Config.LOG_MODERACION, embed)
+
+@bot.event
+async def on_member_unban(guild, user):
+    embed = Embed(
+        title="🔓 Usuario desbaneado",
+        description=f"**Usuario:** {user.mention} ({user.id})",
+        color=Color.green(),
+        timestamp=datetime.datetime.utcnow()
+    )
+    embed.set_footer(text=get_footer())
+    await Logger.send_log(guild, Config.LOG_MODERACION, embed)
+
+@bot.event
+async def on_message_delete(message):
+    if message.guild is None:
+        return
+    if message.author.bot:
+        return
+    embed = Embed(
+        title="🗑️ Mensaje eliminado",
+        description=f"**Autor:** {message.author.mention} ({message.author.id})\n"
+                    f"**Canal:** {message.channel.mention}\n"
+                    f"**Contenido:** {message.content if message.content else '(Sin contenido)'}",
+        color=Color.red(),
+        timestamp=datetime.datetime.utcnow()
+    )
+    if message.attachments:
+        embed.add_field(name="Archivos adjuntos", value="\n".join([a.url for a in message.attachments]), inline=False)
+    embed.set_footer(text=get_footer())
+    await Logger.send_log(message.guild, Config.LOG_MENSAJES, embed)
+
+@bot.event
+async def on_message_edit(before, after):
+    if before.guild is None:
+        return
+    if before.author.bot:
+        return
+    if before.content == after.content:
+        return
+    embed = Embed(
+        title="✏️ Mensaje editado",
+        description=f"**Autor:** {before.author.mention} ({before.author.id})\n"
+                    f"**Canal:** {before.channel.mention}\n"
+                    f"**Antes:** {before.content if before.content else '(Vacío)'}\n"
+                    f"**Después:** {after.content if after.content else '(Vacío)'}",
+        color=Color.orange(),
+        timestamp=datetime.datetime.utcnow()
+    )
+    embed.set_footer(text=get_footer())
+    await Logger.send_log(before.guild, Config.LOG_MENSAJES, embed)
+
+@bot.event
+async def on_bulk_message_delete(messages):
+    if not messages:
+        return
+    guild = messages[0].guild
+    if guild is None:
+        return
+    channel = messages[0].channel
+    embed = Embed(
+        title="📦 Mensajes eliminados en masa",
+        description=f"**Canal:** {channel.mention}\n"
+                    f"**Cantidad:** {len(messages)} mensajes",
+        color=Color.dark_red(),
+        timestamp=datetime.datetime.utcnow()
+    )
+    embed.set_footer(text=get_footer())
+    await Logger.send_log(guild, Config.LOG_MENSAJES, embed)
+
+# ===================== PROCESO DE VERIFICACIÓN POR DM =====================
 @bot.event
 async def on_message(message):
     if isinstance(message.channel, discord.DMChannel) and message.author.id in verification_sessions:
@@ -935,11 +1352,9 @@ async def on_message(message):
             if session.get("timeout_task"):
                 session["timeout_task"].cancel()
 
-            # Evaluación automática
             analysis = VerificationEvaluator.evaluate_all(answers)
 
-            # Enviar al canal de revisiones
-            guild = bot.get_guild(1452608365812514999)  # Reemplazar con el ID de tu servidor
+            guild = bot.get_guild(1452608365812514999)  # Cambia por el ID de tu servidor
             if not guild:
                 guild = bot.guilds[0]
             channel_revision = guild.get_channel(Config.CH_REVISIONES_VERIFICACION)
@@ -995,7 +1410,6 @@ async def on_message(message):
 
 # ===================== COMANDOS =====================
 
-# ---------- Panel de Verificación ----------
 @bot.tree.command(name="enviar-panel-verificacion", description="Envía el panel de verificación con botones")
 @app_commands.default_permissions(administrator=True)
 async def enviar_panel_verificacion(interaction: Interaction):
@@ -1026,7 +1440,6 @@ async def enviar_panel_verificacion(interaction: Interaction):
     await channel.send(embed=embed, view=view)
     await interaction.response.send_message("Panel de verificación enviado.", ephemeral=True)
 
-# ---------- Panel de Tickets ----------
 @bot.tree.command(name="enviar-panel-tickets", description="Envía el panel de tickets con selector de categorías")
 @app_commands.default_permissions(administrator=True)
 async def enviar_panel_tickets(interaction: Interaction):
@@ -1051,7 +1464,6 @@ async def enviar_panel_tickets(interaction: Interaction):
     await interaction.channel.send(embed=embed, view=view)
     await interaction.response.send_message("Panel de tickets enviado.", ephemeral=True)
 
-# ---------- Comandos de Ticket (staff) ----------
 @bot.tree.command(name="cerrar-ticket", description="Cierra el ticket actual (solo staff)")
 async def cerrar_ticket(interaction: Interaction):
     try:
@@ -1065,6 +1477,7 @@ async def cerrar_ticket(interaction: Interaction):
         if not is_ticket_channel(channel):
             await interaction.response.send_message("Este canal no es un ticket válido.", ephemeral=True)
             return
+        await Logger.archive_ticket(channel, interaction.user)
         await interaction.response.send_message("Cerrando ticket...")
         ticket_data.pop(channel.id, None)
         await channel.delete()
@@ -1186,7 +1599,6 @@ async def desbloquear_ticket(interaction: Interaction):
     except Exception as e:
         await interaction.response.send_message(f"Error: {e}", ephemeral=True)
 
-# ---------- Abrir Servidor (STAFF GENERAL) ----------
 @bot.tree.command(name="abrir-servidor", description="Abre el servidor (solo staff)")
 async def abrir_servidor(interaction: Interaction):
     if not is_staff(interaction.user):
@@ -1209,7 +1621,6 @@ async def abrir_servidor(interaction: Interaction):
         allowed_mentions=discord.AllowedMentions(roles=True)
     )
 
-# ---------- Cerrar Servidor (STAFF GENERAL) ----------
 @bot.tree.command(name="cerrar-servidor", description="Cierra el servidor (solo staff)")
 async def cerrar_servidor(interaction: Interaction):
     if not is_staff(interaction.user):
@@ -1231,7 +1642,6 @@ async def cerrar_servidor(interaction: Interaction):
         allowed_mentions=discord.AllowedMentions(roles=True)
     )
 
-# ---------- Votación (STAFF GENERAL, SIN COOLDOWN) ----------
 @bot.tree.command(name="votación-abrir", description="Inicia una votación para abrir el servidor (solo staff)")
 async def votacion_abrir(interaction: Interaction):
     if not is_staff(interaction.user):
@@ -1266,7 +1676,6 @@ async def votacion_abrir(interaction: Interaction):
     await message.add_reaction("❌")
     await message.add_reaction("⏰")
 
-# ---------- Sanciones normales (STAFF GENERAL) ----------
 @bot.tree.command(name="sancionar", description="Aplica una sanción a un usuario por infracción de normas (MG, PG, faltas, etc.)")
 @app_commands.describe(
     usuario="Usuario a sancionar",
@@ -1381,7 +1790,6 @@ async def sancion_eliminar(interaction: Interaction, sancion_id: str):
     except Exception as e:
         await interaction.response.send_message(f"Error: {e}", ephemeral=True)
 
-# ---------- Sanciones de staff (SOLO FUNDADOR O SUPERIOR) ----------
 @bot.tree.command(name="sancionar-staff", description="Sanciona a un staff por incumplir la normativa interna (solo Fundador+)")
 @app_commands.describe(
     staff_member="Staff a sancionar",
@@ -1499,7 +1907,6 @@ async def eliminar_sancion_staff(interaction: Interaction, sancion_id: str):
     except Exception as e:
         await interaction.response.send_message(f"Error: {e}", ephemeral=True)
 
-# ---------- Informe Staff ----------
 @bot.tree.command(name="informe-staff", description="Genera un informe de sanciones emitidas por cada staff (solo Fundador+)")
 async def informe_staff(interaction: Interaction):
     try:
@@ -1530,7 +1937,6 @@ async def informe_staff(interaction: Interaction):
     except Exception as e:
         await interaction.response.send_message(f"Error: {e}", ephemeral=True)
 
-# ---------- Citar ----------
 @bot.tree.command(name="citar", description="Cita a un usuario a soporte")
 @app_commands.describe(
     usuario="Usuario a citar",
@@ -1581,7 +1987,6 @@ async def citar(interaction: Interaction, usuario: discord.Member, motivo: str, 
     await channel.send(f"{usuario.mention}", embed=embed_channel)
     await interaction.response.send_message(f"Citación enviada a {usuario.mention}.", ephemeral=True)
 
-# ---------- Sincronización (Propietario y Dueño) ----------
 @bot.tree.command(name="sync", description="Sincroniza los comandos del bot (solo Propietario y Dueño)")
 async def sync(interaction: Interaction):
     if not is_owner_or_dueno(interaction.user):
