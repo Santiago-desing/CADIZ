@@ -1,1 +1,1369 @@
-[requirements.txt](https://github.com/user-attachments/files/29684600/requirements.txt)
+import discord
+from discord import app_commands, ui, ButtonStyle, SelectOption, Interaction, Embed, Color
+from discord.ext import commands
+import aiohttp
+import asyncio
+import motor.motor_asyncio
+import datetime
+import os
+from typing import Optional, Dict, List, Any
+from bson import ObjectId
+
+# ===================== CONFIGURACIÓN =====================
+class Config:
+    # El token se obtiene de la variable de entorno TOKEN, o usa el valor por defecto (cámbialo si quieres)
+    TOKEN = os.getenv("TOKEN", "MTUyMDkyNTU0Mjc1MTE0NjA5NA.GmU1H3.lo4UdZq2w3LFJytA-pn-hHr6UVAdfS9sr16Y6g")
+    # La URI de MongoDB se obtiene de la variable de entorno MONGO_URI
+    MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+
+    # Roles
+    STAFF_GENERAL = 1467132351409819668
+    PROPIETARIO = 1452608365912920170
+    DUENO = 1482020630688956508
+    CO_DUENO = 1500573270112473211
+    FUNDADOR = 1500573616708911386
+    CO_FUNDADOR = 1452608365912920172
+    DIRECTOR_GENERAL = 1520374435536961556
+    MANAGER = 1457083463424278741
+    SUPERVISOR = 1509198197900448037
+    COORDINADOR = 1489591346804166757
+    DIRECTOR_ADMINISTRATIVO = 1520375021220925630
+    ADMINISTRADOR_JEFE = 1452608365892206641
+    ADMINISTRADOR = 1452608365892206640
+    DIRECTOR_MODERATIVO = 1489584063667896321
+    MODERADOR = 1480324121551437944
+    AYUDANTE = 1452608365812515000
+    SOPORTE = 1452608365862584423
+    HELPER = 1492915595249975307
+    VERIFICADO = 1452608365795610694
+    NO_VERIFICADO = 1452608365795610692
+
+    # Categorías de tickets
+    CAT_TICKETS_GENERAL = 1480580609075052757
+    CAT_TICKETS_FUNDACION = 1510944914718982254
+    CAT_TICKETS_FACCIONES_LEGALES = 1510944986248646666
+    CAT_TICKETS_FACCIONES_ILEGALES = 1510945054808735798
+    CAT_TICKETS_REPORTES = 1510945156159766598
+    CAT_TICKETS_EMPRESAS = 1510945204067369121
+    CAT_TICKETS_DONACION = 1510945244605190184
+    CAT_TICKETS_INCIDENCIAS_TECNICAS = 1510945373143699457
+    CAT_TICKETS_VERIFICACION = 1516371570921046088
+
+    # Canales
+    CH_BIENVENIDAS = 1452608366860959826
+    CH_DESPEDIDAS = 1452608366860959827
+    CH_REVISIONES_VERIFICACION = 1452668749701189632
+    CH_SANCIONES_PUBLICAS = 1452608367817261069
+    CH_TICKETS_PRINCIPAL = 1452632044470538443
+    CH_VALORACION_STAFF = 1452608367817261068
+    CH_CITACIONES = 1495441610656448693
+    CH_VERIFICACION_PANEL = 1505926635239768074
+
+    VERIFICATION_TIMEOUT = 1800
+    SERVER_LOGO = "https://i.imgur.com/placeholder.png"  # Cambia por tu logo
+
+# ===================== BASE DE DATOS (MongoDB) =====================
+class Database:
+    def __init__(self, mongo_uri: str):
+        self.client = motor.motor_asyncio.AsyncIOMotorClient(mongo_uri)
+        self.db = self.client["cadiz_rp"]  # Base de datos
+        self.sanciones = self.db["sanciones"]
+        self.server_state = self.db["server_state"]
+        self.votacion = self.db["votacion"]
+
+    async def init(self):
+        # Inicializa el estado del servidor y la votación si no existen
+        if not await self.server_state.find_one({"key": "status"}):
+            await self.server_state.insert_one({"key": "status", "value": "cerrado"})
+        if not await self.votacion.find_one({"key": "votacion"}):
+            await self.votacion.insert_one({"key": "votacion", "timestamp": 0})
+
+    async def add_sancion(self, usuario_id, usuario_nombre, staff_id, staff_nombre, motivo, tipo, pruebas, observaciones):
+        doc = {
+            "usuario_id": usuario_id,
+            "usuario_nombre": usuario_nombre,
+            "staff_id": staff_id,
+            "staff_nombre": staff_nombre,
+            "motivo": motivo,
+            "tipo": tipo,
+            "pruebas": pruebas,
+            "observaciones": observaciones,
+            "fecha": datetime.datetime.utcnow()
+        }
+        result = await self.sanciones.insert_one(doc)
+        return str(result.inserted_id)
+
+    async def get_sanciones_usuario(self, usuario_id):
+        cursor = self.sanciones.find({"usuario_id": usuario_id}).sort("fecha", -1).limit(10)
+        return await cursor.to_list(length=10)
+
+    async def get_sanciones_staff(self, staff_id):
+        cursor = self.sanciones.find({"staff_id": staff_id}).sort("fecha", -1).limit(10)
+        return await cursor.to_list(length=10)
+
+    async def eliminar_sancion(self, sancion_id):
+        try:
+            result = await self.sanciones.delete_one({"_id": ObjectId(sancion_id)})
+            return result.deleted_count > 0
+        except:
+            return False
+
+    async def get_all_sanciones(self):
+        cursor = self.sanciones.find().sort("fecha", -1)
+        return await cursor.to_list(length=None)
+
+    async def get_server_status(self):
+        doc = await self.server_state.find_one({"key": "status"})
+        return doc["value"] if doc else "cerrado"
+
+    async def set_server_status(self, status):
+        await self.server_state.update_one({"key": "status"}, {"$set": {"value": status}}, upsert=True)
+
+    async def get_votacion_timestamp(self):
+        doc = await self.votacion.find_one({"key": "votacion"})
+        return doc["timestamp"] if doc else 0
+
+    async def set_votacion_timestamp(self, timestamp):
+        await self.votacion.update_one({"key": "votacion"}, {"$set": {"timestamp": timestamp}}, upsert=True)
+
+# ===================== BOT =====================
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True
+bot = commands.Bot(command_prefix="!", intents=intents)
+
+db = Database(Config.MONGO_URI)
+verification_sessions: Dict[int, dict] = {}
+ticket_data: Dict[int, dict] = {}
+
+# ===================== EVALUADOR DE VERIFICACIÓN =====================
+class VerificationEvaluator:
+    @staticmethod
+    def evaluate_mg(answer):
+        score = 0
+        alerts = []
+        if "metagaming" in answer.lower() or "información" in answer.lower() or "fuera de rol" in answer.lower():
+            score += 10
+        else:
+            alerts.append("Definición de MG poco clara")
+        if "ejemplo" in answer.lower() or "ej:" in answer.lower():
+            score += 10
+        else:
+            alerts.append("Falta ejemplo concreto de MG")
+        return score, alerts
+
+    @staticmethod
+    def evaluate_pg(answer):
+        score = 0
+        alerts = []
+        if "powergaming" in answer.lower() or "forzar" in answer.lower() or "acción imposible" in answer.lower():
+            score += 10
+        else:
+            alerts.append("Definición de PG poco clara")
+        if "ejemplo" in answer.lower() or "ej:" in answer.lower():
+            score += 10
+        else:
+            alerts.append("Falta ejemplo concreto de PG")
+        return score, alerts
+
+    @staticmethod
+    def evaluate_failrp(answer):
+        score = 0
+        alerts = []
+        if "reportar" in answer.lower() or "antirol" in answer.lower() or "romper" in answer.lower():
+            score += 8
+        else:
+            alerts.append("No menciona reportar adecuadamente")
+        if "seguir" in answer.lower() and "rol" in answer.lower():
+            score += 7
+        else:
+            alerts.append("No menciona continuar el rol sin romperlo")
+        return score, alerts
+
+    @staticmethod
+    def evaluate_situation(answer):
+        score = 0
+        alerts = []
+        if "reportar" in answer.lower() or "admin" in answer.lower() or "moderador" in answer.lower():
+            score += 8
+        else:
+            alerts.append("No menciona reportar la situación")
+        if "pruebas" in answer.lower() or "grabación" in answer.lower() or "captura" in answer.lower():
+            score += 7
+        else:
+            alerts.append("No menciona recopilar pruebas")
+        return score, alerts
+
+    @staticmethod
+    def evaluate_compromiso(nivel_roleo, como_metiste):
+        score = 0
+        if nivel_roleo.isdigit() and int(nivel_roleo) >= 5:
+            score += 5
+        if "anterior" in como_metiste.lower() or "invitación" in como_metiste.lower():
+            score += 5
+        elif "búsqueda" in como_metiste.lower() or "redes" in como_metiste.lower():
+            score += 3
+        return score
+
+    @staticmethod
+    def evaluate_bonus(answers):
+        bonus = 0
+        for key, value in answers.items():
+            if isinstance(value, str) and len(value.split()) > 10:
+                bonus += 2
+        if bonus > 15:
+            bonus = 15
+        return bonus
+
+    @classmethod
+    def evaluate_all(cls, answers):
+        mg_score, mg_alerts = cls.evaluate_mg(answers.get('mg', ''))
+        pg_score, pg_alerts = cls.evaluate_pg(answers.get('pg', ''))
+        failrp_score, failrp_alerts = cls.evaluate_failrp(answers.get('antirol', ''))
+        situation_score, situation_alerts = cls.evaluate_situation(answers.get('antirol', ''))
+        compromiso_score = cls.evaluate_compromiso(answers.get('nivel_roleo', '0'), answers.get('como_metiste', ''))
+        bonus_score = cls.evaluate_bonus(answers)
+
+        total = mg_score + pg_score + failrp_score + situation_score + compromiso_score + bonus_score
+
+        alerts = []
+        alerts.extend(mg_alerts)
+        alerts.extend(pg_alerts)
+        alerts.extend(failrp_alerts)
+        alerts.extend(situation_alerts)
+        if compromiso_score < 5:
+            alerts.append("Compromiso bajo con el rol")
+        if bonus_score < 5:
+            alerts.append("Respuestas demasiado cortas o poco detalladas")
+
+        if total >= 85:
+            decision = "APROBAR"
+            motivo = "Excelente conocimiento y compromiso. Aprobado automáticamente."
+        elif total >= 60:
+            decision = "REVISAR"
+            motivo = "Conocimiento básico aceptable pero con algunas respuestas que merecen revisión manual."
+        else:
+            decision = "RECHAZAR"
+            motivo = "Puntuación baja. Se recomienda rechazar o pedir una nueva solicitud."
+
+        return {
+            "mg": mg_score,
+            "pg": pg_score,
+            "failrp": failrp_score,
+            "situation": situation_score,
+            "compromiso": compromiso_score,
+            "bonus": bonus_score,
+            "total": total,
+            "alerts": alerts,
+            "decision": decision,
+            "motivo": motivo
+        }
+
+# ===================== UTILIDADES =====================
+def is_staff(member: discord.Member) -> bool:
+    if not member.guild:
+        return False
+    staff_role = member.guild.get_role(Config.STAFF_GENERAL)
+    return staff_role in member.roles
+
+def is_fundador_or_higher(member: discord.Member) -> bool:
+    roles_ids = [Config.FUNDADOR, Config.CO_DUENO, Config.DUENO, Config.PROPIETARIO]
+    member_roles = [r.id for r in member.roles]
+    return any(r_id in member_roles for r_id in roles_ids)
+
+def get_utc_timestamp():
+    return datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+
+def get_footer():
+    return f"© Cádiz RP • {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')}"
+
+async def send_dm(user: discord.User, content: str = "", embed: Embed = None) -> bool:
+    try:
+        if embed:
+            await user.send(content, embed=embed)
+        else:
+            await user.send(content)
+        return True
+    except discord.Forbidden:
+        return False
+
+async def create_ticket_channel(guild: discord.Guild, category_id: int, user: discord.Member, topic: str = "Ticket") -> discord.TextChannel:
+    category = guild.get_channel(category_id)
+    if not category:
+        raise ValueError("Categoría no encontrada")
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(read_messages=False),
+        user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
+        guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
+    }
+    staff_role = guild.get_role(Config.STAFF_GENERAL)
+    if staff_role:
+        overwrites[staff_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+    channel = await guild.create_text_channel(
+        name=f"ticket-{user.name[:10]}",
+        category=category,
+        overwrites=overwrites,
+        topic=topic
+    )
+    return channel
+
+async def check_roblox_user(username: str) -> Optional[int]:
+    url = "https://users.roblox.com/v1/usernames/users"
+    payload = {"usernames": [username]}
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, json=payload) as resp:
+            if resp.status != 200:
+                return None
+            data = await resp.json()
+            if data.get("data") and len(data["data"]) > 0:
+                return data["data"][0]["id"]
+            return None
+
+async def get_roblox_avatar(user_id: int) -> Optional[str]:
+    url = f"https://thumbnails.roblox.com/v1/users/avatar?userIds={user_id}&size=420x420&format=Png"
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as resp:
+            if resp.status != 200:
+                return None
+            data = await resp.json()
+            if data.get("data") and len(data["data"]) > 0:
+                return data["data"][0]["imageUrl"]
+            return None
+
+# ===================== VIEWS =====================
+
+# --- Confirmación para verificación ---
+class ConfirmView(ui.View):
+    def __init__(self, user_id: int):
+        super().__init__(timeout=60.0)
+        self.user_id = user_id
+        self.confirmed = False
+
+    @ui.button(label="✅ Sí, estoy seguro", style=ButtonStyle.success, custom_id="confirm_yes")
+    async def confirm_yes(self, interaction: Interaction, button: ui.Button):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("Este mensaje no es para ti.", ephemeral=True)
+            return
+        self.confirmed = True
+        await interaction.response.send_message("✅ ¡Perfecto! Comenzamos con la verificación.", ephemeral=True)
+        user = interaction.user
+        embed = Embed(
+            title="🔐 Verificación - Cádiz RP",
+            description="Responde a las preguntas que te haré por este canal. Tienes **30 minutos** para completar el proceso.\n\n**Pregunta 1:** ¿Cuál es tu usuario de Roblox?",
+            color=Color.blue()
+        )
+        embed.set_footer(text=get_footer())
+        try:
+            await user.send(embed=embed)
+            verification_sessions[user.id] = {
+                "step": 1,
+                "answers": {},
+                "timeout_task": asyncio.create_task(self.timeout_verification(user))
+            }
+        except discord.Forbidden:
+            await user.send("❌ No puedo enviarte mensajes directos. Por favor, habilita los DMs de este servidor.")
+        self.stop()
+
+    @ui.button(label="❌ No, cancelar", style=ButtonStyle.danger, custom_id="confirm_no")
+    async def confirm_no(self, interaction: Interaction, button: ui.Button):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("Este mensaje no es para ti.", ephemeral=True)
+            return
+        self.confirmed = False
+        await interaction.response.send_message("❌ Proceso cancelado. Si cambias de opinión, vuelve a presionar **COMENZAR**.", ephemeral=True)
+        self.stop()
+
+    async def on_timeout(self):
+        if not self.confirmed:
+            try:
+                user = await bot.fetch_user(self.user_id)
+                await user.send("⏰ Tiempo agotado. No has confirmado a tiempo. Vuelve a intentarlo desde el panel.")
+            except:
+                pass
+        self.stop()
+
+    async def timeout_verification(self, user: discord.User):
+        await asyncio.sleep(Config.VERIFICATION_TIMEOUT)
+        if user.id in verification_sessions:
+            session = verification_sessions.pop(user.id, None)
+            if session and session.get("timeout_task"):
+                try:
+                    embed = Embed(
+                        title="⏰ Tiempo agotado",
+                        description="El proceso de verificación ha expirado. Por favor, inicia uno nuevo desde el panel.",
+                        color=Color.red()
+                    )
+                    embed.set_footer(text=get_footer())
+                    await user.send(embed=embed)
+                except:
+                    pass
+
+# --- Panel de Verificación ---
+class VerificationPanelView(ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @ui.button(label="▶️ COMENZAR", style=ButtonStyle.success, custom_id="verify_start")
+    async def start_verification(self, interaction: Interaction, button: ui.Button):
+        user = interaction.user
+        if user.id in verification_sessions:
+            await interaction.response.send_message("Ya tienes un proceso de verificación en curso. Revisa tus mensajes directos.", ephemeral=True)
+            return
+        embed_confirm = Embed(
+            title="⚠️ Confirmación necesaria",
+            description="Has solicitado iniciar el proceso de verificación en **Cádiz RP**.\n\n"
+                        "Este proceso te hará 8 preguntas y tomará unos minutos.\n"
+                        "¿Estás seguro de que deseas continuar?\n\n"
+                        "Tienes **60 segundos** para decidir.",
+            color=Color.orange()
+        )
+        embed_confirm.set_footer(text=get_footer())
+        try:
+            view = ConfirmView(user.id)
+            await user.send(embed=embed_confirm, view=view)
+            await interaction.response.send_message("✅ Te he enviado un mensaje directo. **Confirma** tu decisión para comenzar.", ephemeral=True)
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ No puedo enviarte mensajes directos. Por favor, habilita los DMs de este servidor.", ephemeral=True)
+
+    @ui.button(label="🎫 TICKET", style=ButtonStyle.primary, custom_id="verify_ticket")
+    async def ticket_verification(self, interaction: Interaction, button: ui.Button):
+        user = interaction.user
+        guild = interaction.guild
+        if not guild:
+            await interaction.response.send_message("Este comando solo funciona en un servidor.", ephemeral=True)
+            return
+        try:
+            channel = await create_ticket_channel(guild, Config.CAT_TICKETS_VERIFICACION, user, "Ticket de verificación")
+            ticket_data[channel.id] = {"owner_id": user.id, "claimed_by": None, "locked": False}
+            embed = Embed(
+                title="🎫 Ticket de Verificación",
+                description=f"**Usuario:** {user.mention}\n"
+                            f"**Tipo:** Verificación\n\n"
+                            "Un miembro del staff se pondrá en contacto contigo para ayudarte con el proceso.\n\n"
+                            "🔹 **Botones disponibles:**\n"
+                            "• **Cerrar** – Elimina el ticket.\n"
+                            "• **Reclamar** – Asigna el ticket a un staff.\n"
+                            "• **Bloquear/Desbloquear** – Gestiona el permiso de escritura del usuario.",
+                color=Color.blue()
+            )
+            embed.set_footer(text=get_footer())
+            view = TicketControlView(channel.id)
+            await channel.send(f"{user.mention} <@&{Config.STAFF_GENERAL}>", embed=embed, view=view)
+            await interaction.response.send_message(f"✅ Ticket creado: {channel.mention}", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Error al crear el ticket: {e}", ephemeral=True)
+
+# --- Panel de Tickets (Select) ---
+class TicketSelectMenu(ui.Select):
+    def __init__(self):
+        options = [
+            SelectOption(label="General", value="general", description="Cualquier consulta general", emoji="📩"),
+            SelectOption(label="Fundación", value="fundacion", description="Asuntos de la fundación", emoji="🏛️"),
+            SelectOption(label="Facciones Legales", value="legales", description="Ayuda con facciones legales", emoji="⚖️"),
+            SelectOption(label="Facciones Ilegales", value="ilegales", description="Ayuda con facciones ilegales", emoji="🔫"),
+            SelectOption(label="Reportes", value="reportes", description="Reportar a un usuario", emoji="📢"),
+            SelectOption(label="Empresas", value="empresas", description="Asuntos empresariales", emoji="🏢"),
+            SelectOption(label="Donación", value="donacion", description="Sobre donaciones y beneficios", emoji="💎"),
+            SelectOption(label="Incidencias Técnicas", value="incidencias", description="Problemas técnicos", emoji="🔧"),
+        ]
+        super().__init__(placeholder="Selecciona una categoría", options=options, custom_id="ticket_select")
+
+    async def callback(self, interaction: Interaction):
+        value = self.values[0]
+        category_mapping = {
+            "general": Config.CAT_TICKETS_GENERAL,
+            "fundacion": Config.CAT_TICKETS_FUNDACION,
+            "legales": Config.CAT_TICKETS_FACCIONES_LEGALES,
+            "ilegales": Config.CAT_TICKETS_FACCIONES_ILEGALES,
+            "reportes": Config.CAT_TICKETS_REPORTES,
+            "empresas": Config.CAT_TICKETS_EMPRESAS,
+            "donacion": Config.CAT_TICKETS_DONACION,
+            "incidencias": Config.CAT_TICKETS_INCIDENCIAS_TECNICAS,
+        }
+        category_id = category_mapping.get(value)
+        if not category_id:
+            await interaction.response.send_message("Categoría no válida.", ephemeral=True)
+            return
+        guild = interaction.guild
+        user = interaction.user
+        try:
+            channel = await create_ticket_channel(guild, category_id, user, f"Ticket {value.capitalize()}")
+            ticket_data[channel.id] = {"owner_id": user.id, "claimed_by": None, "locked": False}
+            embed = Embed(
+                title=f"🎫 Ticket {value.capitalize()}",
+                description=f"**Usuario:** {user.mention}\n"
+                            f"**Tipo:** {value.capitalize()}\n\n"
+                            "📌 **Instrucciones:**\n"
+                            "• Explica tu problema o consulta detalladamente.\n"
+                            "• Un staff te atenderá en breve.\n\n"
+                            "🔹 **Botones disponibles:**\n"
+                            "• **Cerrar** – Elimina el ticket.\n"
+                            "• **Reclamar** – Asigna el ticket a un staff.\n"
+                            "• **Bloquear/Desbloquear** – Gestiona el permiso de escritura del usuario.",
+                color=Color.blue()
+            )
+            embed.set_footer(text=get_footer())
+            view = TicketControlView(channel.id)
+            await channel.send(f"{user.mention} <@&{Config.STAFF_GENERAL}>", embed=embed, view=view)
+            await interaction.response.send_message(f"✅ Ticket creado: {channel.mention}", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Error al crear el ticket: {e}", ephemeral=True)
+
+class TicketPanelView(ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(TicketSelectMenu())
+
+# --- Control de Tickets ---
+class TicketControlView(ui.View):
+    def __init__(self, channel_id: int):
+        super().__init__(timeout=None)
+        self.channel_id = channel_id
+
+    @ui.button(label="Cerrar", style=ButtonStyle.danger, custom_id="ticket_close")
+    async def close_ticket(self, interaction: Interaction, button: ui.Button):
+        if not is_staff(interaction.user):
+            await interaction.response.send_message("No tienes permisos para cerrar este ticket.", ephemeral=True)
+            return
+        channel = interaction.channel
+        if channel.id != self.channel_id:
+            await interaction.response.send_message("Este botón no pertenece a este canal.", ephemeral=True)
+            return
+        await interaction.response.send_message("Cerrando ticket...")
+        await channel.delete()
+        ticket_data.pop(self.channel_id, None)
+
+    @ui.button(label="Reclamar", style=ButtonStyle.primary, custom_id="ticket_claim")
+    async def claim_ticket(self, interaction: Interaction, button: ui.Button):
+        if not is_staff(interaction.user):
+            await interaction.response.send_message("No tienes permisos para reclamar este ticket.", ephemeral=True)
+            return
+        channel = interaction.channel
+        if channel.id != self.channel_id:
+            await interaction.response.send_message("Este botón no pertenece a este canal.", ephemeral=True)
+            return
+        data = ticket_data.get(self.channel_id)
+        if not data:
+            await interaction.response.send_message("Este ticket no está registrado.", ephemeral=True)
+            return
+        if data["claimed_by"]:
+            await interaction.response.send_message(f"Este ticket ya ha sido reclamado por <@{data['claimed_by']}>.", ephemeral=True)
+            return
+        data["claimed_by"] = interaction.user.id
+        try:
+            await channel.edit(name=f"ticket-{interaction.user.name[:10]}")
+        except:
+            pass
+        embed = Embed(
+            title="📌 Ticket reclamado",
+            description=f"**{interaction.user.mention}** ha reclamado este ticket y se hará cargo del caso.\n"
+                        "Puedes esperar una respuesta en breve.",
+            color=Color.green()
+        )
+        embed.set_footer(text=get_footer())
+        await channel.send(embed=embed)
+        await interaction.response.send_message("Has reclamado este ticket.", ephemeral=True)
+
+    @ui.button(label="Bloquear", style=ButtonStyle.secondary, custom_id="ticket_lock")
+    async def lock_ticket(self, interaction: Interaction, button: ui.Button):
+        if not is_staff(interaction.user):
+            await interaction.response.send_message("No tienes permisos para bloquear este ticket.", ephemeral=True)
+            return
+        channel = interaction.channel
+        if channel.id != self.channel_id:
+            await interaction.response.send_message("Este botón no pertenece a este canal.", ephemeral=True)
+            return
+        data = ticket_data.get(self.channel_id)
+        if not data:
+            await interaction.response.send_message("Este ticket no está registrado.", ephemeral=True)
+            return
+        if data["locked"]:
+            await interaction.response.send_message("El ticket ya está bloqueado.", ephemeral=True)
+            return
+        data["locked"] = True
+        guild = interaction.guild
+        member = guild.get_member(data["owner_id"])
+        if member:
+            await channel.set_permissions(member, send_messages=False)
+        embed = Embed(
+            title="🔒 Ticket bloqueado",
+            description=f"El ticket ha sido bloqueado por **{interaction.user.mention}**.\n"
+                        "En adelante, solo el personal del staff podrá escribir en este canal.\n"
+                        "Usa el botón **Desbloquear** para restaurar los permisos.",
+            color=Color.orange()
+        )
+        embed.set_footer(text=get_footer())
+        await channel.send(embed=embed)
+        await interaction.response.send_message("Ticket bloqueado.", ephemeral=True)
+
+    @ui.button(label="Desbloquear", style=ButtonStyle.success, custom_id="ticket_unlock")
+    async def unlock_ticket(self, interaction: Interaction, button: ui.Button):
+        if not is_staff(interaction.user):
+            await interaction.response.send_message("No tienes permisos para desbloquear este ticket.", ephemeral=True)
+            return
+        channel = interaction.channel
+        if channel.id != self.channel_id:
+            await interaction.response.send_message("Este botón no pertenece a este canal.", ephemeral=True)
+            return
+        data = ticket_data.get(self.channel_id)
+        if not data:
+            await interaction.response.send_message("Este ticket no está registrado.", ephemeral=True)
+            return
+        if not data["locked"]:
+            await interaction.response.send_message("El ticket no está bloqueado.", ephemeral=True)
+            return
+        data["locked"] = False
+        guild = interaction.guild
+        member = guild.get_member(data["owner_id"])
+        if member:
+            await channel.set_permissions(member, send_messages=True)
+        embed = Embed(
+            title="🔓 Ticket desbloqueado",
+            description=f"El ticket ha sido desbloqueado por **{interaction.user.mention}**.\n"
+                        "El usuario ya puede volver a escribir en el canal.",
+            color=Color.green()
+        )
+        embed.set_footer(text=get_footer())
+        await channel.send(embed=embed)
+        await interaction.response.send_message("Ticket desbloqueado.", ephemeral=True)
+
+# --- Revisión de Verificación (con botones Aceptar/Denegar) ---
+class VerificationReviewView(ui.View):
+    def __init__(self, user_id: int, roblox_name: str, roblox_id: int, answers: dict, analysis: dict):
+        super().__init__(timeout=None)
+        self.user_id = user_id
+        self.roblox_name = roblox_name
+        self.roblox_id = roblox_id
+        self.answers = answers
+        self.analysis = analysis
+
+    @ui.button(label="Aceptar", style=ButtonStyle.success, custom_id="verify_accept")
+    async def accept_verification(self, interaction: Interaction, button: ui.Button):
+        if not is_staff(interaction.user):
+            await interaction.response.send_message("No tienes permisos para realizar esta acción.", ephemeral=True)
+            return
+        guild = interaction.guild
+        if not guild:
+            await interaction.response.send_message("Este comando solo funciona en un servidor.", ephemeral=True)
+            return
+        member = guild.get_member(self.user_id)
+        if not member:
+            await interaction.response.send_message("El usuario ya no está en el servidor.", ephemeral=True)
+            return
+
+        verificado = guild.get_role(Config.VERIFICADO)
+        no_verificado = guild.get_role(Config.NO_VERIFICADO)
+        if verificado:
+            await member.add_roles(verificado)
+        if no_verificado and no_verificado in member.roles:
+            await member.remove_roles(no_verificado)
+        try:
+            await member.edit(nick=f"Civil | {self.roblox_name}")
+        except:
+            pass
+
+        avatar_url = await get_roblox_avatar(self.roblox_id)
+        if not avatar_url:
+            avatar_url = "https://www.roblox.com/asset-thumbnail/image?assetId=0&width=420&height=420&format=png"
+
+        embed_dm = Embed(
+            title="✅ ¡Verificación aprobada!",
+            description=f"**Bienvenido/a a Cádiz RP, {member.mention}.**\n\n"
+                        "Ya tienes acceso al servidor. Recuerda leer las normas y disfrutar del roleo.\n"
+                        "Si necesitas ayuda, abre un ticket.",
+            color=Color.green()
+        )
+        embed_dm.add_field(name="👤 Usuario de Roblox", value=f"{self.roblox_name} (ID: {self.roblox_id})", inline=False)
+        embed_dm.set_thumbnail(url=avatar_url)
+        embed_dm.set_footer(text=get_footer())
+        await send_dm(member, "", embed=embed_dm)
+
+        embed_original = interaction.message.embeds[0] if interaction.message.embeds else Embed(title="Revisión de verificación")
+        embed_original.description = f"**Estado:** ✅ Aceptado por {interaction.user.mention}\n**Usuario:** {member.mention}\n**Roblox:** {self.roblox_name} (ID: {self.roblox_id})"
+        embed_original.set_thumbnail(url=avatar_url)
+        embed_original.color = Color.green()
+        embed_original.set_footer(text=get_footer())
+        await interaction.message.edit(embed=embed_original, view=None)
+        await interaction.response.send_message("Usuario verificado correctamente.", ephemeral=True)
+
+    @ui.button(label="Denegar", style=ButtonStyle.danger, custom_id="verify_deny")
+    async def deny_verification(self, interaction: Interaction, button: ui.Button):
+        if not is_staff(interaction.user):
+            await interaction.response.send_message("No tienes permisos para realizar esta acción.", ephemeral=True)
+            return
+        guild = interaction.guild
+        if not guild:
+            await interaction.response.send_message("Este comando solo funciona en un servidor.", ephemeral=True)
+            return
+        member = guild.get_member(self.user_id)
+        if member:
+            embed_dm = Embed(
+                title="❌ Verificación denegada",
+                description="Lamentamos informarte que tu solicitud de verificación ha sido **rechazada**.\n"
+                            "Si crees que es un error, abre un ticket para solicitar una revisión.",
+                color=Color.red()
+            )
+            embed_dm.set_footer(text=get_footer())
+            await send_dm(member, "", embed=embed_dm)
+        embed_original = interaction.message.embeds[0] if interaction.message.embeds else Embed(title="Revisión de verificación")
+        embed_original.description = f"**Estado:** ❌ Denegado por {interaction.user.mention}\n**Usuario:** {member.mention if member else 'Usuario no encontrado'}\n**Roblox:** {self.roblox_name}"
+        embed_original.color = Color.red()
+        embed_original.set_footer(text=get_footer())
+        await interaction.message.edit(embed=embed_original, view=None)
+        await interaction.response.send_message("Verificación denegada.", ephemeral=True)
+
+# ===================== EVENTOS =====================
+@bot.event
+async def on_ready():
+    await db.init()
+    print(f"Bot conectado como {bot.user}")
+    try:
+        synced = await bot.tree.sync()
+        print(f"Comandos sincronizados: {len(synced)}")
+    except Exception as e:
+        print(f"Error al sincronizar comandos: {e}")
+
+@bot.event
+async def on_member_join(member: discord.Member):
+    guild = member.guild
+    channel = guild.get_channel(Config.CH_BIENVENIDAS)
+    if not channel:
+        return
+    human_members = sum(1 for m in guild.members if not m.bot)
+    embed = Embed(
+        title="👋 ¡Bienvenido/a a Cádiz RP!",
+        description=f"**{member.mention}**, te damos la bienvenida a **Cádiz RP**.\n\n"
+                    "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    "📌 **Pasos principales:**\n\n"
+                    "1️⃣ **Verifícate** en el canal <#1505926635239768074>.\n"
+                    "2️⃣ **Crea tu DNI** en <#1452608368069054480>.\n"
+                    "3️⃣ **Lee las normas** en <#1452608366860959830>.\n"
+                    "4️⃣ **¡Empieza a rolear!**\n"
+                    "Tenemos trabajos: Policía, Emergencias, Conservación, Criminal y más.\n\n"
+                    "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    "🎟️ **¿Problemas?** Abre un ticket en <#1452632044470538443>.\n\n"
+                    f"📊 **Miembros humanos:** {human_members}\n"
+                    "¡Disfruta del servidor!",
+        color=Color.gold()
+    )
+    embed.set_thumbnail(url=member.display_avatar.url)
+    embed.set_footer(text=get_footer())
+    await channel.send(embed=embed)
+
+@bot.event
+async def on_message(message):
+    if isinstance(message.channel, discord.DMChannel) and message.author.id in verification_sessions:
+        user_id = message.author.id
+        session = verification_sessions[user_id]
+        step = session["step"]
+        answers = session["answers"]
+
+        if step == 1:
+            username = message.content.strip()
+            roblox_id = await check_roblox_user(username)
+            if not roblox_id:
+                await message.channel.send("❌ El usuario de Roblox no existe. Por favor, vuelve a iniciar el proceso con el botón COMENZAR.")
+                verification_sessions.pop(user_id, None)
+                return
+            answers["roblox_user"] = username
+            answers["roblox_id"] = roblox_id
+            session["step"] = 2
+            avatar_url = await get_roblox_avatar(roblox_id)
+            if avatar_url:
+                embed_confirm = Embed(
+                    title="✅ Usuario de Roblox verificado",
+                    description=f"**Nombre:** {username}\n**ID:** {roblox_id}",
+                    color=Color.green()
+                )
+                embed_confirm.set_thumbnail(url=avatar_url)
+                embed_confirm.set_footer(text=get_footer())
+                await message.channel.send(embed=embed_confirm)
+            else:
+                await message.channel.send(f"✅ Usuario de Roblox verificado (ID: {roblox_id}).")
+            await message.channel.send("**Pregunta 2:** ¿Cómo te has metido al servidor?")
+
+        elif step == 2:
+            answers["como_metiste"] = message.content.strip()
+            session["step"] = 3
+            await message.channel.send("**Pregunta 3:** Del 1 al 10, ¿cuánto sabes rolear?")
+
+        elif step == 3:
+            answers["nivel_roleo"] = message.content.strip()
+            session["step"] = 4
+            await message.channel.send("**Pregunta 4:** ¿Qué significa MG? Pon un ejemplo.")
+
+        elif step == 4:
+            answers["mg"] = message.content.strip()
+            session["step"] = 5
+            await message.channel.send("**Pregunta 5:** ¿Qué significa PG? Pon un ejemplo.")
+
+        elif step == 5:
+            answers["pg"] = message.content.strip()
+            session["step"] = 6
+            await message.channel.send("**Pregunta 6:** ¿Qué harías si ves a alguien haciendo antirol?")
+
+        elif step == 6:
+            answers["antirol"] = message.content.strip()
+            session["step"] = 7
+            await message.channel.send("**Pregunta 7:** ¿Qué te gustaría ser dentro del servidor?")
+
+        elif step == 7:
+            answers["aspiracion"] = message.content.strip()
+            session["step"] = 8
+            await message.channel.send("**Pregunta 8:** ¿Una vez verificado aceptas que no podrás realizar ningún antirol? (responde sí o no)")
+
+        elif step == 8:
+            respuesta = message.content.strip().lower()
+            if respuesta not in ["sí", "si", "no"]:
+                await message.channel.send("Por favor, responde con 'sí' o 'no'.")
+                return
+            answers["acepta_antirol"] = respuesta in ["sí", "si"]
+            if session.get("timeout_task"):
+                session["timeout_task"].cancel()
+
+            # Evaluación automática
+            analysis = VerificationEvaluator.evaluate_all(answers)
+
+            # Enviar al canal de revisiones
+            guild = bot.get_guild(1452608365812514999)  # Reemplazar con el ID de tu servidor
+            if not guild:
+                guild = bot.guilds[0]
+            channel_revision = guild.get_channel(Config.CH_REVISIONES_VERIFICACION)
+            if channel_revision:
+                preguntas_respuestas = (
+                    f"**P1: Usuario de Roblox**\n{answers['roblox_user']}\n\n"
+                    f"**P2: ¿Cómo te has metido al servidor?**\n{answers['como_metiste']}\n\n"
+                    f"**P3: Del 1 al 10, ¿cuánto sabes rolear?**\n{answers['nivel_roleo']}\n\n"
+                    f"**P4: ¿Qué significa MG? Pon un ejemplo.**\n{answers['mg']}\n\n"
+                    f"**P5: ¿Qué significa PG? Pon un ejemplo.**\n{answers['pg']}\n\n"
+                    f"**P6: ¿Qué harías si ves a alguien haciendo antirol?**\n{answers['antirol']}\n\n"
+                    f"**P7: ¿Qué te gustaría ser dentro del servidor?**\n{answers['aspiracion']}\n\n"
+                    f"**P8: ¿Una vez verificado aceptas que no podrás realizar ningún antirol?**\n{'Sí' if answers['acepta_antirol'] else 'No'}"
+                )
+                embed = Embed(
+                    title="📋 Revisión de Verificación",
+                    description=f"**Usuario:** {message.author.mention}\n**Roblox:** {answers['roblox_user']}",
+                    color=Color.blue()
+                )
+                embed.add_field(name="📋 Respuestas del formulario:", value=preguntas_respuestas, inline=False)
+                embed.add_field(
+                    name="📊 Análisis automático — REVISAR",
+                    value=f"**Puntuación total:** {analysis['total']}/95\n"
+                          f"**Metagaming:** {analysis['mg']}/20 pts\n"
+                          f"**Powergaming:** {analysis['pg']}/20 pts\n"
+                          f"**Fail RP:** {analysis['failrp']}/15 pts\n"
+                          f"**Situación práctica:** {analysis['situation']}/15 pts\n"
+                          f"**Compromiso:** {analysis['compromiso']}/10 pts\n"
+                          f"**Bonus calidad:** {analysis['bonus']}/15 pts\n"
+                          f"**Decisión sugerida:** {analysis['decision']}",
+                    inline=False
+                )
+                if analysis['alerts']:
+                    embed.add_field(
+                        name="⚠️ Alertas",
+                        value="\n".join(f"• {alert}" for alert in analysis['alerts']),
+                        inline=False
+                    )
+                embed.add_field(name="📌 Motivo sugerido", value=analysis['motivo'], inline=False)
+                embed.set_footer(text=get_footer())
+                view = VerificationReviewView(
+                    user_id=message.author.id,
+                    roblox_name=answers['roblox_user'],
+                    roblox_id=answers['roblox_id'],
+                    answers=answers,
+                    analysis=analysis
+                )
+                await channel_revision.send(f"<@&{Config.STAFF_GENERAL}>", embed=embed, view=view)
+                await message.channel.send("✅ Tu verificación ha sido enviada a revisión. Espera la respuesta del staff.")
+            else:
+                await message.channel.send("❌ No se encontró el canal de revisiones. Contacta con un administrador.")
+            verification_sessions.pop(user_id, None)
+
+# ===================== COMANDOS =====================
+
+# ---------- Panel de Verificación ----------
+@bot.tree.command(name="enviar-panel-verificacion", description="Envía el panel de verificación con botones")
+@app_commands.default_permissions(administrator=True)
+async def enviar_panel_verificacion(interaction: Interaction):
+    guild = interaction.guild
+    if not guild:
+        await interaction.response.send_message("Este comando solo funciona en un servidor.", ephemeral=True)
+        return
+    channel = guild.get_channel(Config.CH_VERIFICACION_PANEL)
+    if not channel:
+        await interaction.response.send_message("No se encontró el canal de verificación.", ephemeral=True)
+        return
+    embed = Embed(
+        title="🔐 Panel de Verificación",
+        description="**Bienvenido al sistema de verificación de Cádiz RP.**\n\n"
+                    "Para poder acceder al servidor y comenzar a rolear, debes completar el proceso de verificación.\n\n"
+                    "📌 **¿Cómo funciona?**\n"
+                    "• Presiona **COMENZAR** para iniciar el cuestionario.\n"
+                    "• Recibirás las preguntas por mensaje privado.\n"
+                    "• Responde con honestidad.\n"
+                    "• Un staff revisará tus respuestas y te aprobará o denegará.\n\n"
+                    "⚠️ **Si tienes problemas**, usa el botón **TICKET** para abrir un ticket de soporte.\n\n"
+                    "¡Mucha suerte!",
+        color=Color.gold()
+    )
+    embed.set_thumbnail(url=Config.SERVER_LOGO)
+    embed.set_footer(text=get_footer())
+    view = VerificationPanelView()
+    await channel.send(embed=embed, view=view)
+    await interaction.response.send_message("Panel de verificación enviado.", ephemeral=True)
+
+# ---------- Panel de Tickets ----------
+@bot.tree.command(name="enviar-panel-tickets", description="Envía el panel de tickets con selector de categorías")
+@app_commands.default_permissions(administrator=True)
+async def enviar_panel_tickets(interaction: Interaction):
+    guild = interaction.guild
+    if not guild:
+        await interaction.response.send_message("Este comando solo funciona en un servidor.", ephemeral=True)
+        return
+    embed = Embed(
+        title="🎫 Sistema de Tickets",
+        description="**Selecciona la categoría de tu solicitud** en el menú desplegable.\n\n"
+                    "📌 **Instrucciones:**\n"
+                    "• Elige la opción que mejor se ajuste a tu consulta.\n"
+                    "• Se creará un canal privado para ti y el staff.\n"
+                    "• Explica detalladamente tu problema o petición.\n"
+                    "• Un miembro del staff te atenderá lo antes posible.\n\n"
+                    "⚠️ **Importante:** No abuses del sistema. Los tickets son para asuntos importantes.",
+        color=Color.blue()
+    )
+    embed.set_thumbnail(url=Config.SERVER_LOGO)
+    embed.set_footer(text=get_footer())
+    view = TicketPanelView()
+    await interaction.channel.send(embed=embed, view=view)
+    await interaction.response.send_message("Panel de tickets enviado.", ephemeral=True)
+
+# ---------- Comandos de Ticket (staff) ----------
+@bot.tree.command(name="cerrar-ticket", description="Cierra el ticket actual (solo staff)")
+async def cerrar_ticket(interaction: Interaction):
+    if not is_staff(interaction.user):
+        await interaction.response.send_message("No tienes permisos.", ephemeral=True)
+        return
+    channel = interaction.channel
+    if not isinstance(channel, discord.TextChannel) or channel.id not in ticket_data:
+        await interaction.response.send_message("Este no es un canal de ticket válido.", ephemeral=True)
+        return
+    await interaction.response.send_message("Cerrando ticket...")
+    await channel.delete()
+    ticket_data.pop(channel.id, None)
+
+@bot.tree.command(name="reclamar-ticket", description="Reclama el ticket actual (solo staff)")
+async def reclamar_ticket(interaction: Interaction):
+    if not is_staff(interaction.user):
+        await interaction.response.send_message("No tienes permisos.", ephemeral=True)
+        return
+    channel = interaction.channel
+    if not isinstance(channel, discord.TextChannel) or channel.id not in ticket_data:
+        await interaction.response.send_message("Este no es un canal de ticket válido.", ephemeral=True)
+        return
+    data = ticket_data[channel.id]
+    if data["claimed_by"]:
+        await interaction.response.send_message(f"Este ticket ya ha sido reclamado por <@{data['claimed_by']}>.", ephemeral=True)
+        return
+    data["claimed_by"] = interaction.user.id
+    try:
+        await channel.edit(name=f"ticket-{interaction.user.name[:10]}")
+    except:
+        pass
+    embed = Embed(
+        title="📌 Ticket reclamado",
+        description=f"**{interaction.user.mention}** ha reclamado este ticket y se hará cargo.\n"
+                    "Puedes esperar una respuesta en breve.",
+        color=Color.green()
+    )
+    embed.set_footer(text=get_footer())
+    await channel.send(embed=embed)
+    await interaction.response.send_message("Has reclamado este ticket.", ephemeral=True)
+
+@bot.tree.command(name="bloquear-ticket", description="Bloquea el ticket actual (solo staff)")
+async def bloquear_ticket(interaction: Interaction):
+    if not is_staff(interaction.user):
+        await interaction.response.send_message("No tienes permisos.", ephemeral=True)
+        return
+    channel = interaction.channel
+    if not isinstance(channel, discord.TextChannel) or channel.id not in ticket_data:
+        await interaction.response.send_message("Este no es un canal de ticket válido.", ephemeral=True)
+        return
+    data = ticket_data[channel.id]
+    if data["locked"]:
+        await interaction.response.send_message("El ticket ya está bloqueado.", ephemeral=True)
+        return
+    data["locked"] = True
+    member = interaction.guild.get_member(data["owner_id"])
+    if member:
+        await channel.set_permissions(member, send_messages=False)
+    embed = Embed(
+        title="🔒 Ticket bloqueado",
+        description=f"El ticket ha sido bloqueado por **{interaction.user.mention}**.\n"
+                    "Solo el staff puede escribir ahora.",
+        color=Color.orange()
+    )
+    embed.set_footer(text=get_footer())
+    await channel.send(embed=embed)
+    await interaction.response.send_message("Ticket bloqueado.", ephemeral=True)
+
+@bot.tree.command(name="desbloquear-ticket", description="Desbloquea el ticket actual (solo staff)")
+async def desbloquear_ticket(interaction: Interaction):
+    if not is_staff(interaction.user):
+        await interaction.response.send_message("No tienes permisos.", ephemeral=True)
+        return
+    channel = interaction.channel
+    if not isinstance(channel, discord.TextChannel) or channel.id not in ticket_data:
+        await interaction.response.send_message("Este no es un canal de ticket válido.", ephemeral=True)
+        return
+    data = ticket_data[channel.id]
+    if not data["locked"]:
+        await interaction.response.send_message("El ticket no está bloqueado.", ephemeral=True)
+        return
+    data["locked"] = False
+    member = interaction.guild.get_member(data["owner_id"])
+    if member:
+        await channel.set_permissions(member, send_messages=True)
+    embed = Embed(
+        title="🔓 Ticket desbloqueado",
+        description=f"El ticket ha sido desbloqueado por **{interaction.user.mention}**.\n"
+                    "El usuario ya puede escribir nuevamente.",
+        color=Color.green()
+    )
+    embed.set_footer(text=get_footer())
+    await channel.send(embed=embed)
+    await interaction.response.send_message("Ticket desbloqueado.", ephemeral=True)
+
+# ---------- Abrir/Cerrar Servidor (TEXTO CORREGIDO) ----------
+@bot.tree.command(name="abrir-servidor", description="Abre el servidor (solo staff)")
+@app_commands.default_permissions(administrator=True)
+async def abrir_servidor(interaction: Interaction):
+    if not is_staff(interaction.user):
+        await interaction.response.send_message("No tienes permisos.", ephemeral=True)
+        return
+    await db.set_server_status("abierto")
+    embed = Embed(
+        title="🟢 SERVIDOR ABIERTO",
+        description=f"**El servidor ha sido abierto por {interaction.user.mention}.**\n\n"
+                    f"📅 **Fecha/Hora (UTC):** {get_utc_timestamp()}\n\n"
+                    "🔹 Los miembros pueden acceder con normalidad.",
+        color=Color.green()
+    )
+    embed.set_footer(text=get_footer())
+    await interaction.response.send_message(f"<@&{Config.VERIFICADO}>", embed=embed)
+
+@bot.tree.command(name="cerrar-servidor", description="Cierra el servidor (solo staff)")
+@app_commands.default_permissions(administrator=True)
+async def cerrar_servidor(interaction: Interaction):
+    if not is_staff(interaction.user):
+        await interaction.response.send_message("No tienes permisos.", ephemeral=True)
+        return
+    await db.set_server_status("cerrado")
+    embed = Embed(
+        title="🔴 SERVIDOR CERRADO",
+        description=f"**El servidor ha sido cerrado por {interaction.user.mention}.**\n\n"
+                    f"📅 **Fecha/Hora (UTC):** {get_utc_timestamp()}\n\n"
+                    "🔹 El acceso está restringido temporalmente.",
+        color=Color.red()
+    )
+    embed.set_footer(text=get_footer())
+    await interaction.response.send_message(f"<@&{Config.VERIFICADO}>", embed=embed)
+
+# ---------- Votación ----------
+@bot.tree.command(name="votación-abrir", description="Inicia una votación para abrir el servidor")
+@app_commands.default_permissions(administrator=True)
+async def votacion_abrir(interaction: Interaction):
+    status = await db.get_server_status()
+    if status == "abierto":
+        await interaction.response.send_message("El servidor ya está abierto. No es necesario votar.", ephemeral=True)
+        return
+    last_use = await db.get_votacion_timestamp()
+    now = datetime.datetime.utcnow().timestamp()
+    if now - last_use < 3600:
+        await interaction.response.send_message("Ya se ha usado este comando en la última hora. Espera.", ephemeral=True)
+        return
+    await db.set_votacion_timestamp(int(now))
+    embed = Embed(
+        title="🗳️ Votación para abrir el servidor",
+        description="**El equipo moderativo ha iniciado una votación para abrir el servidor.**\n\n"
+                    "📌 **Reglas:**\n"
+                    "• Se necesitan **5 votos** para abrir.\n"
+                    "• Vota con una de las reacciones:\n"
+                    "   ✅ **Si vas a rolear**\n"
+                    "   ❌ **Si no vas a rolear**\n"
+                    "   ⏰ **Si entras tarde**\n\n"
+                    "🔹 **Participa y decide el futuro de la sesión de roleo.**",
+        color=Color.purple()
+    )
+    embed.set_footer(text=get_footer())
+    await interaction.response.send_message(f"<@&{Config.VERIFICADO}>", embed=embed)
+    message = await interaction.original_response()
+    await message.add_reaction("✅")
+    await message.add_reaction("❌")
+    await message.add_reaction("⏰")
+
+# ---------- Sanciones ----------
+@bot.tree.command(name="sancionar", description="Aplica una sanción a un usuario")
+@app_commands.describe(
+    usuario="Usuario a sancionar",
+    motivo="Motivo de la sanción",
+    tipo="Tipo de sanción",
+    pruebas="Enlace a pruebas (opcional)",
+    observaciones="Observaciones adicionales (opcional)"
+)
+@app_commands.choices(
+    tipo=[
+        app_commands.Choice(name="Grave", value="Grave"),
+        app_commands.Choice(name="Media", value="Media"),
+        app_commands.Choice(name="Leve", value="Leve"),
+        app_commands.Choice(name="Verbal", value="Verbal"),
+    ]
+)
+async def sancionar(interaction: Interaction, usuario: discord.Member, motivo: str, tipo: app_commands.Choice[str],
+                    pruebas: str = "Sin pruebas", observaciones: str = "Sin observaciones"):
+    if not is_staff(interaction.user):
+        await interaction.response.send_message("No tienes permisos.", ephemeral=True)
+        return
+    sancion_id = await db.add_sancion(
+        usuario_id=usuario.id,
+        usuario_nombre=usuario.display_name,
+        staff_id=interaction.user.id,
+        staff_nombre=interaction.user.display_name,
+        motivo=motivo,
+        tipo=tipo.value,
+        pruebas=pruebas,
+        observaciones=observaciones
+    )
+
+    embed_dm = Embed(
+        title="📜 Has recibido una sanción",
+        description=f"**{usuario.mention}**, has sido sancionado en **Cádiz RP**.\n\n"
+                    "🔹 **Detalles:**\n"
+                    f"• **Motivo:** {motivo}\n"
+                    f"• **Tipo:** {tipo.value}\n"
+                    f"• **Pruebas:** {pruebas}\n"
+                    f"• **Observaciones:** {observaciones}\n"
+                    f"• **Staff:** {interaction.user.mention}\n"
+                    f"• **ID de sanción:** `{sancion_id}`\n\n"
+                    "Si consideras que es injusta, puedes solicitar una revisión mediante un ticket.",
+        color=Color.red()
+    )
+    embed_dm.set_footer(text=get_footer())
+    await send_dm(usuario, "", embed=embed_dm)
+
+    guild = interaction.guild
+    if guild:
+        channel = guild.get_channel(Config.CH_SANCIONES_PUBLICAS)
+        if channel:
+            embed_public = Embed(
+                title="⚖️ Sanción aplicada",
+                description=f"**Usuario:** {usuario.mention}\n"
+                            f"**Staff:** {interaction.user.mention}\n"
+                            f"**Motivo:** {motivo}\n"
+                            f"**Tipo:** {tipo.value}\n"
+                            f"**Pruebas:** {pruebas}\n"
+                            f"**Observaciones:** {observaciones}\n"
+                            f"**ID de sanción:** {sancion_id}",
+                color=Color.orange()
+            )
+            embed_public.set_footer(text=get_footer())
+            await channel.send(embed=embed_public)
+    await interaction.response.send_message(f"Sanción aplicada a {usuario.display_name}. ID: {sancion_id}", ephemeral=True)
+
+@bot.tree.command(name="sanciones-ver", description="Ver sanciones de un usuario")
+@app_commands.describe(usuario="Usuario del cual ver sanciones")
+async def sanciones_ver(interaction: Interaction, usuario: discord.Member):
+    if not is_staff(interaction.user):
+        await interaction.response.send_message("No tienes permisos.", ephemeral=True)
+        return
+    sanciones = await db.get_sanciones_usuario(usuario.id)
+    if not sanciones:
+        await interaction.response.send_message(f"{usuario.display_name} no tiene sanciones.", ephemeral=True)
+        return
+    embed = Embed(
+        title=f"📋 Sanciones de {usuario.display_name}",
+        description="Se muestran las últimas 10 sanciones.",
+        color=Color.blue()
+    )
+    for s in sanciones:
+        fecha = s["fecha"].strftime("%d/%m/%Y %H:%M")
+        embed.add_field(
+            name=f"ID {str(s['_id'])[:8]} - {s['tipo']}",
+            value=f"Motivo: {s['motivo']}\nStaff: {s['staff_nombre']}\nFecha: {fecha}",
+            inline=False
+        )
+    embed.set_footer(text=get_footer())
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="sancion-eliminar", description="Eliminar una sanción por ID")
+@app_commands.describe(sancion_id="ID de la sanción a eliminar (el que se muestra en el embed)")
+async def sancion_eliminar(interaction: Interaction, sancion_id: str):
+    if not is_staff(interaction.user):
+        await interaction.response.send_message("No tienes permisos.", ephemeral=True)
+        return
+    success = await db.eliminar_sancion(sancion_id)
+    if success:
+        await interaction.response.send_message(f"Sanción ID `{sancion_id}` eliminada.", ephemeral=True)
+    else:
+        await interaction.response.send_message(f"No se encontró la sanción con ID `{sancion_id}`.", ephemeral=True)
+
+@bot.tree.command(name="sancionar-staff", description="Sancionar a un miembro del staff (solo Fundador+)")
+@app_commands.describe(
+    staff_member="Staff a sancionar",
+    motivo="Motivo",
+    tipo="Tipo de sanción",
+    pruebas="Pruebas",
+    observaciones="Observaciones"
+)
+@app_commands.choices(
+    tipo=[
+        app_commands.Choice(name="Grave", value="Grave"),
+        app_commands.Choice(name="Media", value="Media"),
+        app_commands.Choice(name="Leve", value="Leve"),
+        app_commands.Choice(name="Verbal", value="Verbal"),
+    ]
+)
+async def sancionar_staff(interaction: Interaction, staff_member: discord.Member, motivo: str, tipo: app_commands.Choice[str],
+                          pruebas: str = "Sin pruebas", observaciones: str = "Sin observaciones"):
+    if not is_fundador_or_higher(interaction.user):
+        await interaction.response.send_message("No tienes permisos para sancionar a personal de staff.", ephemeral=True)
+        return
+    if not is_staff(staff_member):
+        await interaction.response.send_message("El usuario no es miembro del staff.", ephemeral=True)
+        return
+    sancion_id = await db.add_sancion(
+        usuario_id=staff_member.id,
+        usuario_nombre=staff_member.display_name,
+        staff_id=interaction.user.id,
+        staff_nombre=interaction.user.display_name,
+        motivo=f"[STAFF] {motivo}",
+        tipo=tipo.value,
+        pruebas=pruebas,
+        observaciones=observaciones
+    )
+    embed_dm = Embed(
+        title="📜 Sanción de staff",
+        description=f"Has recibido una sanción por parte de la dirección.\n"
+                    f"**Motivo:** {motivo}\n**Tipo:** {tipo.value}",
+        color=Color.red()
+    )
+    embed_dm.set_footer(text=get_footer())
+    await send_dm(staff_member, "", embed=embed_dm)
+    await interaction.response.send_message(f"Sanción de staff aplicada a {staff_member.display_name}. ID: {sancion_id}", ephemeral=True)
+
+@bot.tree.command(name="ver-sanciones-staff", description="Ver sanciones aplicadas por un staff (solo Fundador+)")
+@app_commands.describe(staff_member="Staff del cual ver sanciones emitidas")
+async def ver_sanciones_staff(interaction: Interaction, staff_member: discord.Member):
+    if not is_fundador_or_higher(interaction.user):
+        await interaction.response.send_message("No tienes permisos.", ephemeral=True)
+        return
+    sanciones = await db.get_sanciones_staff(staff_member.id)
+    if not sanciones:
+        await interaction.response.send_message(f"{staff_member.display_name} no ha emitido sanciones.", ephemeral=True)
+        return
+    embed = Embed(
+        title=f"📋 Sanciones emitidas por {staff_member.display_name}",
+        color=Color.blue()
+    )
+    for s in sanciones:
+        fecha = s["fecha"].strftime("%d/%m/%Y %H:%M")
+        embed.add_field(
+            name=f"ID {str(s['_id'])[:8]} - {s['tipo']}",
+            value=f"Usuario: {s['usuario_nombre']}\nMotivo: {s['motivo']}\nFecha: {fecha}",
+            inline=False
+        )
+    embed.set_footer(text=get_footer())
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="eliminar-sancion-staff", description="Eliminar una sanción de staff por ID (solo Fundador+)")
+@app_commands.describe(sancion_id="ID de la sanción a eliminar")
+async def eliminar_sancion_staff(interaction: Interaction, sancion_id: str):
+    if not is_fundador_or_higher(interaction.user):
+        await interaction.response.send_message("No tienes permisos.", ephemeral=True)
+        return
+    success = await db.eliminar_sancion(sancion_id)
+    if success:
+        await interaction.response.send_message(f"Sanción ID `{sancion_id}` eliminada.", ephemeral=True)
+    else:
+        await interaction.response.send_message(f"No se encontró la sanción con ID `{sancion_id}`.", ephemeral=True)
+
+@bot.tree.command(name="informe-staff", description="Genera un informe de sanciones emitidas por cada staff (solo Fundador+)")
+async def informe_staff(interaction: Interaction):
+    if not is_fundador_or_higher(interaction.user):
+        await interaction.response.send_message("No tienes permisos.", ephemeral=True)
+        return
+    sanciones = await db.get_all_sanciones()
+    if not sanciones:
+        await interaction.response.send_message("No hay sanciones registradas.", ephemeral=True)
+        return
+    staff_stats = {}
+    for s in sanciones:
+        staff_id = s["staff_id"]
+        if staff_id not in staff_stats:
+            staff_stats[staff_id] = {"nombre": s["staff_nombre"], "count": 0}
+        staff_stats[staff_id]["count"] += 1
+    embed = Embed(
+        title="📊 Informe de sanciones por staff",
+        description="Cantidad total de sanciones emitidas por cada miembro del staff.",
+        color=Color.gold()
+    )
+    for staff_id, data in staff_stats.items():
+        member = interaction.guild.get_member(staff_id)
+        nombre = member.display_name if member else data["nombre"]
+        embed.add_field(name=nombre, value=f"{data['count']} sanciones", inline=False)
+    embed.set_footer(text=get_footer())
+    await interaction.response.send_message(embed=embed)
+
+# ---------- Citar ----------
+@bot.tree.command(name="citar", description="Cita a un usuario a soporte")
+@app_commands.describe(
+    usuario="Usuario a citar",
+    motivo="Motivo de la citación",
+    intento="Número de intento (1-3)"
+)
+async def citar(interaction: Interaction, usuario: discord.Member, motivo: str, intento: app_commands.Range[int, 1, 3]):
+    if not is_staff(interaction.user):
+        await interaction.response.send_message("No tienes permisos.", ephemeral=True)
+        return
+
+    embed_dm = Embed(
+        title="📞 Has sido citado a soporte",
+        description="Has sido citado por el Staff de **Cádiz RP**.\n\n"
+                    "Por favor, únete al canal de voz **📞 Esperando Soporte** para ser atendido.\n\n"
+                    "🔹 **Motivo:**\n"
+                    f"{motivo}\n\n"
+                    f"✅ **Citado por:** {interaction.user.mention}",
+        color=Color.blue()
+    )
+    embed_dm.set_footer(text=get_footer())
+    await send_dm(usuario, "", embed=embed_dm)
+
+    guild = interaction.guild
+    if not guild:
+        await interaction.response.send_message("Este comando solo funciona en un servidor.", ephemeral=True)
+        return
+
+    channel = guild.get_channel(Config.CH_CITACIONES)
+    if not channel:
+        await interaction.response.send_message("No se encontró el canal de citaciones.", ephemeral=True)
+        return
+
+    embed_channel = Embed(
+        title="📢 Citación a sala de espera",
+        description=f"**{usuario.display_name}** ha sido citado por el staff.\n\n"
+                    "🔹 **Usuario citado:**\n"
+                    f"{usuario.mention}\n\n"
+                    "🔹 **Motivo:**\n"
+                    f"{motivo}\n\n"
+                    "🔹 **Qué debo hacer:**\n"
+                    "Entra al canal de voz **📞 Esperando Soporte** y espera a ser atendido por el staff.\n\n"
+                    f"🔹 **Solicitud por:** {interaction.user.mention}\n\n"
+                    f"📞 **LLAMADOS REALIZADOS:** {intento}/3",
+        color=Color.blue()
+    )
+    embed_channel.set_footer(text=get_footer())
+    await channel.send(f"{usuario.mention}", embed=embed_channel)
+    await interaction.response.send_message(f"Citación enviada a {usuario.mention}.", ephemeral=True)
+
+# ===================== EJECUCIÓN =====================
+if __name__ == "__main__":
+    bot.run(Config.TOKEN)
