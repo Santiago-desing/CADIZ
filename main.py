@@ -1101,19 +1101,14 @@ async def cerrar_servidor(interaction: Interaction):
         allowed_mentions=discord.AllowedMentions(roles=True)
     )
 
-# ---------- Votación ----------
+# ---------- Votación (SIN COOLDOWN) ----------
 @bot.tree.command(name="votación-abrir", description="Inicia una votación para abrir el servidor")
 async def votacion_abrir(interaction: Interaction):
     status = await db.get_server_status()
     if status == "abierto":
         await interaction.response.send_message("El servidor ya está abierto. No es necesario votar.", ephemeral=True)
         return
-    last_use = await db.get_votacion_timestamp()
-    now = datetime.datetime.utcnow().timestamp()
-    if now - last_use < 3600:
-        await interaction.response.send_message("Ya se ha usado este comando en la última hora. Espera.", ephemeral=True)
-        return
-    await db.set_votacion_timestamp(int(now))
+
     embed = Embed(
         title="🗳️ Votación para abrir el servidor",
         description="**El equipo moderativo ha iniciado una votación para abrir el servidor.**\n\n"
