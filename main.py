@@ -13,7 +13,7 @@ from bson import ObjectId
 class Config:
     TOKEN = os.getenv("TOKEN", "TU_TOKEN_AQUI")
     MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
-    OWNER_ID = 1452608365912920170  # ID del Propietario
+    OWNER_ID = 1452608365912920170  # ID del Propietario (usuario)
 
     # Roles
     STAFF_GENERAL = 1467132351409819668
@@ -267,6 +267,14 @@ def is_staff(member: discord.Member) -> bool:
 
 def is_fundador_or_higher(member: discord.Member) -> bool:
     roles_ids = [Config.FUNDADOR, Config.CO_FUNDADOR, Config.CO_DUENO, Config.DUENO, Config.PROPIETARIO]
+    member_roles = [r.id for r in member.roles]
+    return any(r_id in member_roles for r_id in roles_ids)
+
+def is_owner_or_dueno(member: discord.Member) -> bool:
+    """Verifica si el miembro tiene el rol de Propietario o Dueño, o es el dueño del bot."""
+    if member.id == Config.OWNER_ID:
+        return True
+    roles_ids = [Config.PROPIETARIO, Config.DUENO]
     member_roles = [r.id for r in member.roles]
     return any(r_id in member_roles for r_id in roles_ids)
 
@@ -1453,10 +1461,10 @@ async def citar(interaction: Interaction, usuario: discord.Member, motivo: str, 
     await channel.send(f"{usuario.mention}", embed=embed_channel)
     await interaction.response.send_message(f"Citación enviada a {usuario.mention}.", ephemeral=True)
 
-# ---------- Sincronización de comandos (solo dueño) ----------
-@bot.tree.command(name="sync", description="Sincroniza los comandos del bot (solo dueño)")
+# ---------- Sincronización (Propietario y Dueño) ----------
+@bot.tree.command(name="sync", description="Sincroniza los comandos del bot (solo Propietario y Dueño)")
 async def sync(interaction: Interaction):
-    if interaction.user.id != Config.OWNER_ID:
+    if not is_owner_or_dueno(interaction.user):
         await interaction.response.send_message("No tienes permisos para usar este comando.", ephemeral=True)
         return
     await interaction.response.defer(ephemeral=True)
@@ -1468,4 +1476,5 @@ async def sync(interaction: Interaction):
 
 # ===================== EJECUCIÓN =====================
 if __name__ == "__main__":
+    bot.run(Config.TOKEN)
     bot.run(Config.TOKEN)
