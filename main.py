@@ -81,6 +81,7 @@ class Config:
     LOG_INVITACIONES = 1489589554032676884
     LOG_MENSAJES = 1489588046910459904
     LOG_TICKETS = 1489661308931674292
+    LOG_VALORACIONES = LOG_GENERAL  # Usamos el canal general para valoraciones, pero puedes crear uno específico
 
     VERIFICATION_TIMEOUT = 1800
     SERVER_LOGO = "https://i.imgur.com/placeholder.png"
@@ -93,6 +94,7 @@ class Database:
         self.sanciones = self.db["sanciones"]
         self.server_state = self.db["server_state"]
         self.votacion = self.db["votacion"]
+        self.valoraciones = self.db["valoraciones"]  # Nueva colección
 
     async def init(self):
         if not await self.server_state.find_one({"key": "status"}):
@@ -148,6 +150,40 @@ class Database:
     async def set_votacion_timestamp(self, timestamp):
         await self.votacion.update_one({"key": "votacion"}, {"$set": {"timestamp": timestamp}}, upsert=True)
 
+    # Métodos para valoraciones
+    async def add_valoracion(self, user_id, user_name, staff_id, staff_name, puntuacion, comentario, ticket_id):
+        doc = {
+            "user_id": user_id,
+            "user_name": user_name,
+            "staff_id": staff_id,
+            "staff_name": staff_name,
+            "puntuacion": puntuacion,
+            "comentario": comentario,
+            "ticket_id": ticket_id,
+            "fecha": datetime.datetime.utcnow()
+        }
+        result = await self.valoraciones.insert_one(doc)
+        return str(result.inserted_id)
+
+    async def get_valoraciones_usuario(self, user_id):
+        cursor = self.valoraciones.find({"user_id": user_id}).sort("fecha", -1)
+        return await cursor.to_list(length=None)
+
+    async def get_valoraciones_staff(self, staff_id):
+        cursor = self.valoraciones.find({"staff_id": staff_id}).sort("fecha", -1)
+        return await cursor.to_list(length=None)
+
+    async def get_valoracion_ticket(self, ticket_id):
+        return await self.valoraciones.find_one({"ticket_id": ticket_id})
+
+    async def get_promedio_staff(self, staff_id):
+        cursor = self.valoraciones.find({"staff_id": staff_id})
+        valoraciones = await cursor.to_list(length=None)
+        if not valoraciones:
+            return None
+        total = sum(v["puntuacion"] for v in valoraciones)
+        return total / len(valoraciones)
+
 # ===================== BOT =====================
 intents = discord.Intents.default()
 intents.message_content = True
@@ -163,9 +199,9 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 db = Database(Config.MONGO_URI)
 verification_sessions: Dict[int, dict] = {}
-ticket_data: Dict[int, dict] = {}
+ticket_data: Dict[int, dict] = {}  # {channel_id: {"owner_id": int, "claimed_by": int, "locked": bool, "closed": bool}}
 
-# ===================== LOGGER MEJORADO =====================
+# ===================== LOGGER =====================
 class Logger:
     @staticmethod
     async def send_log(guild: discord.Guild, channel_id: int, embed: Embed):
@@ -233,6 +269,11 @@ class Logger:
         await Logger.send_log(guild, Config.LOG_TICKETS, embed)
 
     @staticmethod
+    async def log_valoracion(guild: discord.Guild, title: str, description: str, color: Color = Color.gold(), author: discord.Member = None, target: str = None):
+        embed = Logger.create_base_embed(title, description, color, author, target)
+        await Logger.send_log(guild, Config.LOG_VALORACIONES, embed)
+
+    @staticmethod
     async def archive_ticket(channel: discord.TextChannel, closer: discord.Member):
         guild = channel.guild
         messages = []
@@ -293,9 +334,11 @@ def get_utc_timestamp():
 def get_footer():
     return f"© Cádiz RP • {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')}"
 
-async def send_dm(user: discord.User, content: str = "", embed: Embed = None) -> bool:
+async def send_dm(user: discord.User, content: str = "", embed: Embed = None, view: ui.View = None) -> bool:
     try:
-        if embed:
+        if view:
+            await user.send(content, embed=embed, view=view)
+        elif embed:
             await user.send(content, embed=embed)
         else:
             await user.send(content)
@@ -308,6 +351,10 @@ async def create_ticket_channel(guild: discord.Guild, category_id: int, user: di
     category = guild.get_channel(category_id)
     if not category:
         raise ValueError("Categoría no encontrada")
+
+    # COMPROBAR SI EL USUARIO YA TIENE UN TICKET ABIERTO
+    if await has_active_ticket(user):
+        raise ValueError("Ya tienes un ticket abierto. Cierra el actual antes de abrir otro.")
 
     overwrites = {
         guild.default_role: discord.PermissionOverwrite(read_messages=False),
@@ -324,30 +371,27 @@ async def create_ticket_channel(guild: discord.Guild, category_id: int, user: di
         overwrites=overwrites,
         topic=topic
     )
+    # Guardar propietario en ticket_data
+    ticket_data[channel.id] = {"owner_id": user.id, "claimed_by": None, "locked": False, "closed": False}
     return channel
 
-async def check_roblox_user(username: str) -> Optional[int]:
-    url = "https://users.roblox.com/v1/usernames/users"
-    payload = {"usernames": [username]}
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, json=payload) as resp:
-            if resp.status != 200:
-                return None
-            data = await resp.json()
-            if data.get("data") and len(data["data"]) > 0:
-                return data["data"][0]["id"]
-            return None
-
-async def get_roblox_avatar(user_id: int) -> Optional[str]:
-    url = f"https://thumbnails.roblox.com/v1/users/avatar?userIds={user_id}&size=420x420&format=Png"
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as resp:
-            if resp.status != 200:
-                return None
-            data = await resp.json()
-            if data.get("data") and len(data["data"]) > 0:
-                return data["data"][0]["imageUrl"]
-            return None
+async def has_active_ticket(user: discord.Member) -> bool:
+    """Verifica si el usuario tiene un ticket abierto en cualquier categoría de tickets."""
+    guild = user.guild
+    for category_id in Config.TICKET_CATEGORIES:
+        category = guild.get_channel(category_id)
+        if not category:
+            continue
+        for channel in category.channels:
+            if isinstance(channel, discord.TextChannel):
+                # Verificar si el usuario tiene permisos para leer/escribir en ese canal
+                perms = channel.permissions_for(user)
+                if perms.read_messages and perms.send_messages:
+                    # También comprobar que el canal esté en ticket_data y no esté cerrado
+                    data = ticket_data.get(channel.id)
+                    if data and not data.get("closed", False):
+                        return True
+    return False
 
 async def get_audit_log_moderator(guild: discord.Guild, action: discord.AuditLogAction, target_id: int) -> Optional[discord.Member]:
     try:
@@ -357,6 +401,104 @@ async def get_audit_log_moderator(guild: discord.Guild, action: discord.AuditLog
     except:
         pass
     return None
+
+# ===================== MODAL DE VALORACIÓN =====================
+class ValorarModal(ui.Modal, title="Valoración del staff"):
+    puntuacion = ui.TextInput(
+        label="Puntuación (1-10)",
+        placeholder="Ej: 8",
+        min_length=1,
+        max_length=2,
+        required=True
+    )
+    comentario = ui.TextInput(
+        label="Comentario (opcional)",
+        placeholder="¿Qué tal fue la atención?",
+        required=False,
+        style=discord.TextStyle.paragraph,
+        max_length=500
+    )
+
+    def __init__(self, user: discord.Member, staff_id: int, ticket_id: int):
+        super().__init__()
+        self.user = user
+        self.staff_id = staff_id
+        self.ticket_id = ticket_id
+
+    async def on_submit(self, interaction: Interaction):
+        # Validar que la puntuación sea un número entre 1 y 10
+        try:
+            punt = int(self.puntuacion.value)
+            if punt < 1 or punt > 10:
+                await interaction.response.send_message("❌ La puntuación debe ser un número entre 1 y 10.", ephemeral=True)
+                return
+        except ValueError:
+            await interaction.response.send_message("❌ Debes introducir un número válido entre 1 y 10.", ephemeral=True)
+            return
+
+        # Obtener información del staff
+        staff_member = interaction.guild.get_member(self.staff_id)
+        staff_name = staff_member.display_name if staff_member else f"Staff ID {self.staff_id}"
+
+        # Guardar en la base de datos
+        valoracion_id = await db.add_valoracion(
+            user_id=self.user.id,
+            user_name=self.user.display_name,
+            staff_id=self.staff_id,
+            staff_name=staff_name,
+            puntuacion=punt,
+            comentario=self.comentario.value,
+            ticket_id=str(self.ticket_id)
+        )
+
+        # Enviar confirmación al usuario
+        embed_resp = Embed(
+            title="✅ ¡Gracias por valorar!",
+            description=f"Has valorado al staff con **{punt}/10**.\n"
+                        f"Comentario: {self.comentario.value if self.comentario.value else 'Sin comentario'}",
+            color=Color.green()
+        )
+        embed_resp.set_footer(text=get_footer())
+        await interaction.response.send_message(embed=embed_resp, ephemeral=True)
+
+        # Log de valoración
+        embed_log = Embed(
+            title="⭐ Nueva valoración de staff",
+            description=f"**Usuario:** {self.user.mention} ({self.user.id})\n"
+                        f"**Staff valorado:** {staff_member.mention if staff_member else staff_name} ({self.staff_id})\n"
+                        f"**Puntuación:** {punt}/10\n"
+                        f"**Comentario:** {self.comentario.value if self.comentario.value else 'Sin comentario'}\n"
+                        f"**Ticket ID:** {self.ticket_id}",
+            color=Color.gold(),
+            timestamp=datetime.datetime.utcnow()
+        )
+        embed_log.set_footer(text=get_footer())
+        await Logger.send_log(interaction.guild, Config.LOG_VALORACIONES, embed_log)
+
+# ===================== VISTA DE VALORACIÓN =====================
+class ValorarView(ui.View):
+    def __init__(self, user: discord.Member, staff_id: int, ticket_id: int):
+        super().__init__(timeout=300)  # 5 minutos para valorar
+        self.user = user
+        self.staff_id = staff_id
+        self.ticket_id = ticket_id
+        self.valorado = False
+
+    @ui.button(label="⭐ Valorar atención", style=ButtonStyle.primary, custom_id="valorar_staff")
+    async def valorar_button(self, interaction: Interaction, button: ui.Button):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("Este mensaje no es para ti.", ephemeral=True)
+            return
+        if self.valorado:
+            await interaction.response.send_message("Ya has valorado este ticket.", ephemeral=True)
+            return
+        # Abrir el modal
+        modal = ValorarModal(self.user, self.staff_id, self.ticket_id)
+        await interaction.response.send_modal(modal)
+        self.valorado = True
+        # Desactivar el botón después de usarlo
+        self.children[0].disabled = True
+        await interaction.message.edit(view=self)
 
 # ===================== EVALUADOR DE VERIFICACIÓN =====================
 class VerificationEvaluator:
@@ -632,7 +774,6 @@ class VerificationPanelView(ui.View):
             channel_name = f"ticket-verificacion-{user.name[:10]}"
             topic = f"Ticket abierto por {user.mention} a las {datetime.datetime.utcnow().strftime('%H:%M UTC')} en la categoría Verificación"
             channel = await create_ticket_channel(guild, Config.CAT_TICKETS_VERIFICACION, user, channel_name, topic)
-            ticket_data[channel.id] = {"owner_id": user.id, "claimed_by": None, "locked": False}
             embed = Embed(
                 title="🎫 Ticket de Verificación",
                 description=f"**Usuario:** {user.mention}\n**Tipo:** Verificación\n\n"
@@ -647,6 +788,8 @@ class VerificationPanelView(ui.View):
             view = TicketControlView(channel.id)
             await channel.send(f"{user.mention} <@&{Config.STAFF_GENERAL}>", embed=embed, view=view)
             await interaction.response.send_message(f"✅ Ticket creado: {channel.mention}", ephemeral=True)
+        except ValueError as e:
+            await interaction.response.send_message(f"❌ {e}", ephemeral=True)
         except Exception as e:
             await interaction.response.send_message(f"❌ Error al crear el ticket: {e}", ephemeral=True)
 
@@ -703,7 +846,6 @@ class TicketSelectMenu(ui.Select):
             topic = f"Ticket abierto por {user.mention} a las {datetime.datetime.utcnow().strftime('%H:%M UTC')} en la categoría {selected_data['label']}"
 
             channel = await create_ticket_channel(guild, category_id, user, channel_name, topic)
-            ticket_data[channel.id] = {"owner_id": user.id, "claimed_by": None, "locked": False}
             embed = Embed(
                 title=f"🎫 Ticket {selected_data['label']}",
                 description=f"**Usuario:** {user.mention}\n"
@@ -721,6 +863,8 @@ class TicketSelectMenu(ui.Select):
             view = TicketControlView(channel.id)
             await channel.send(f"{user.mention} <@&{Config.STAFF_GENERAL}>", embed=embed, view=view)
             await interaction.response.send_message(f"✅ Ticket creado: {channel.mention}", ephemeral=True)
+        except ValueError as e:
+            await interaction.response.send_message(f"❌ {e}", ephemeral=True)
         except Exception as e:
             await interaction.response.send_message(f"❌ Error al crear el ticket: {e}", ephemeral=True)
 
@@ -729,7 +873,7 @@ class TicketPanelView(ui.View):
         super().__init__(timeout=None)
         self.add_item(TicketSelectMenu())
 
-# --- Control de Tickets (con archivado) ---
+# --- Control de Tickets (con archivado y valoración) ---
 class TicketControlView(ui.View):
     def __init__(self, channel_id: int):
         super().__init__(timeout=None)
@@ -747,10 +891,38 @@ class TicketControlView(ui.View):
         if not is_ticket_channel(channel):
             await interaction.response.send_message("Este canal no es un ticket válido.", ephemeral=True)
             return
+
+        # Obtener datos del ticket
+        data = ticket_data.get(self.channel_id, {})
+        owner_id = data.get("owner_id")
+        claimed_by = data.get("claimed_by")
+
+        # Marcar como cerrado
+        data["closed"] = True
+        ticket_data[self.channel_id] = data
+
+        # Archivar y borrar
         await Logger.archive_ticket(channel, interaction.user)
+
+        # Enviar valoración al usuario si existe
+        if owner_id:
+            owner = interaction.guild.get_member(owner_id)
+            if owner:
+                staff_id = claimed_by if claimed_by else interaction.user.id  # Si no está reclamado, el que cierra
+                embed_val = Embed(
+                    title="📝 ¡Gracias por usar nuestro sistema de tickets!",
+                    description="Nos gustaría conocer tu opinión sobre la atención recibida.\n"
+                                "Por favor, pulsa el botón para valorar al staff que te atendió.\n"
+                                "Tienes **5 minutos** para hacerlo.",
+                    color=Color.blue()
+                )
+                embed_val.set_footer(text=get_footer())
+                view = ValorarView(owner, staff_id, self.channel_id)
+                await send_dm(owner, embed=embed_val, view=view)
+
         await interaction.response.send_message("Cerrando ticket...")
-        ticket_data.pop(channel.id, None)
         await channel.delete()
+        ticket_data.pop(self.channel_id, None)
 
     @ui.button(label="Reclamar", style=ButtonStyle.primary, custom_id="ticket_claim")
     async def claim_ticket(self, interaction: Interaction, button: ui.Button):
@@ -766,7 +938,7 @@ class TicketControlView(ui.View):
             return
         data = ticket_data.get(self.channel_id)
         if not data:
-            ticket_data[self.channel_id] = {"owner_id": None, "claimed_by": None, "locked": False}
+            ticket_data[self.channel_id] = {"owner_id": None, "claimed_by": None, "locked": False, "closed": False}
             data = ticket_data[self.channel_id]
         if data["claimed_by"]:
             await interaction.response.send_message(f"Este ticket ya ha sido reclamado por <@{data['claimed_by']}>.", ephemeral=True)
@@ -796,7 +968,7 @@ class TicketControlView(ui.View):
             return
         data = ticket_data.get(self.channel_id)
         if not data:
-            ticket_data[self.channel_id] = {"owner_id": None, "claimed_by": None, "locked": False}
+            ticket_data[self.channel_id] = {"owner_id": None, "claimed_by": None, "locked": False, "closed": False}
             data = ticket_data[self.channel_id]
         if data["locked"]:
             await interaction.response.send_message("El ticket ya está bloqueado.", ephemeral=True)
@@ -835,7 +1007,7 @@ class TicketControlView(ui.View):
             return
         data = ticket_data.get(self.channel_id)
         if not data:
-            ticket_data[self.channel_id] = {"owner_id": None, "claimed_by": None, "locked": False}
+            ticket_data[self.channel_id] = {"owner_id": None, "claimed_by": None, "locked": False, "closed": False}
             data = ticket_data[self.channel_id]
         if not data["locked"]:
             await interaction.response.send_message("El ticket no está bloqueado.", ephemeral=True)
@@ -1477,10 +1649,33 @@ async def cerrar_ticket(interaction: Interaction):
         if not is_ticket_channel(channel):
             await interaction.response.send_message("Este canal no es un ticket válido.", ephemeral=True)
             return
+
+        data = ticket_data.get(channel.id, {})
+        owner_id = data.get("owner_id")
+        claimed_by = data.get("claimed_by")
+        data["closed"] = True
+        ticket_data[channel.id] = data
+
         await Logger.archive_ticket(channel, interaction.user)
+
+        if owner_id:
+            owner = interaction.guild.get_member(owner_id)
+            if owner:
+                staff_id = claimed_by if claimed_by else interaction.user.id
+                embed_val = Embed(
+                    title="📝 ¡Gracias por usar nuestro sistema de tickets!",
+                    description="Nos gustaría conocer tu opinión sobre la atención recibida.\n"
+                                "Por favor, pulsa el botón para valorar al staff que te atendió.\n"
+                                "Tienes **5 minutos** para hacerlo.",
+                    color=Color.blue()
+                )
+                embed_val.set_footer(text=get_footer())
+                view = ValorarView(owner, staff_id, channel.id)
+                await send_dm(owner, embed=embed_val, view=view)
+
         await interaction.response.send_message("Cerrando ticket...")
-        ticket_data.pop(channel.id, None)
         await channel.delete()
+        ticket_data.pop(channel.id, None)
     except Exception as e:
         await interaction.response.send_message(f"Error: {e}", ephemeral=True)
 
@@ -1499,7 +1694,7 @@ async def reclamar_ticket(interaction: Interaction):
             return
         data = ticket_data.get(channel.id)
         if not data:
-            ticket_data[channel.id] = {"owner_id": None, "claimed_by": None, "locked": False}
+            ticket_data[channel.id] = {"owner_id": None, "claimed_by": None, "locked": False, "closed": False}
             data = ticket_data[channel.id]
         if data["claimed_by"]:
             await interaction.response.send_message(f"Este ticket ya ha sido reclamado por <@{data['claimed_by']}>.", ephemeral=True)
@@ -1532,7 +1727,7 @@ async def bloquear_ticket(interaction: Interaction):
             return
         data = ticket_data.get(channel.id)
         if not data:
-            ticket_data[channel.id] = {"owner_id": None, "claimed_by": None, "locked": False}
+            ticket_data[channel.id] = {"owner_id": None, "claimed_by": None, "locked": False, "closed": False}
             data = ticket_data[channel.id]
         if data["locked"]:
             await interaction.response.send_message("El ticket ya está bloqueado.", ephemeral=True)
@@ -1573,7 +1768,7 @@ async def desbloquear_ticket(interaction: Interaction):
             return
         data = ticket_data.get(channel.id)
         if not data:
-            ticket_data[channel.id] = {"owner_id": None, "claimed_by": None, "locked": False}
+            ticket_data[channel.id] = {"owner_id": None, "claimed_by": None, "locked": False, "closed": False}
             data = ticket_data[channel.id]
         if not data["locked"]:
             await interaction.response.send_message("El ticket no está bloqueado.", ephemeral=True)
