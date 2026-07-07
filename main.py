@@ -165,7 +165,7 @@ db = Database(Config.MONGO_URI)
 verification_sessions: Dict[int, dict] = {}
 ticket_data: Dict[int, dict] = {}
 
-# ===================== LOGGER =====================
+# ===================== LOGGER MEJORADO =====================
 class Logger:
     @staticmethod
     async def send_log(guild: discord.Guild, channel_id: int, embed: Embed):
@@ -177,57 +177,59 @@ class Logger:
                 pass
 
     @staticmethod
-    async def log_general(guild: discord.Guild, title: str, description: str, color: Color = Color.blue()):
+    def create_base_embed(title: str, description: str, color: Color, author: Optional[discord.Member] = None, target: Optional[str] = None) -> Embed:
         embed = Embed(title=title, description=description, color=color, timestamp=datetime.datetime.utcnow())
         embed.set_footer(text=get_footer())
+        embed.add_field(name="📅 Fecha/Hora (UTC)", value=datetime.datetime.utcnow().strftime("%d/%m/%Y %H:%M:%S"), inline=False)
+        if author:
+            embed.add_field(name="👤 Responsable", value=f"{author.mention} ({author.id})", inline=False)
+        if target:
+            embed.add_field(name="🎯 Sobre", value=target, inline=False)
+        return embed
+
+    @staticmethod
+    async def log_general(guild: discord.Guild, title: str, description: str, color: Color = Color.blue(), author: discord.Member = None, target: str = None):
+        embed = Logger.create_base_embed(title, description, color, author, target)
         await Logger.send_log(guild, Config.LOG_GENERAL, embed)
 
     @staticmethod
-    async def log_moderacion(guild: discord.Guild, title: str, description: str, color: Color = Color.red()):
-        embed = Embed(title=title, description=description, color=color, timestamp=datetime.datetime.utcnow())
-        embed.set_footer(text=get_footer())
+    async def log_moderacion(guild: discord.Guild, title: str, description: str, color: Color = Color.red(), author: discord.Member = None, target: str = None):
+        embed = Logger.create_base_embed(title, description, color, author, target)
         await Logger.send_log(guild, Config.LOG_MODERACION, embed)
 
     @staticmethod
-    async def log_emojis(guild: discord.Guild, title: str, description: str, color: Color = Color.gold()):
-        embed = Embed(title=title, description=description, color=color, timestamp=datetime.datetime.utcnow())
-        embed.set_footer(text=get_footer())
+    async def log_emojis(guild: discord.Guild, title: str, description: str, color: Color = Color.gold(), author: discord.Member = None, target: str = None):
+        embed = Logger.create_base_embed(title, description, color, author, target)
         await Logger.send_log(guild, Config.LOG_EMOJIS, embed)
 
     @staticmethod
-    async def log_roles(guild: discord.Guild, title: str, description: str, color: Color = Color.purple()):
-        embed = Embed(title=title, description=description, color=color, timestamp=datetime.datetime.utcnow())
-        embed.set_footer(text=get_footer())
+    async def log_roles(guild: discord.Guild, title: str, description: str, color: Color = Color.purple(), author: discord.Member = None, target: str = None):
+        embed = Logger.create_base_embed(title, description, color, author, target)
         await Logger.send_log(guild, Config.LOG_ROLES, embed)
 
     @staticmethod
-    async def log_miembros(guild: discord.Guild, title: str, description: str, color: Color = Color.green()):
-        embed = Embed(title=title, description=description, color=color, timestamp=datetime.datetime.utcnow())
-        embed.set_footer(text=get_footer())
+    async def log_miembros(guild: discord.Guild, title: str, description: str, color: Color = Color.green(), author: discord.Member = None, target: str = None):
+        embed = Logger.create_base_embed(title, description, color, author, target)
         await Logger.send_log(guild, Config.LOG_MIEMBROS, embed)
 
     @staticmethod
-    async def log_canales(guild: discord.Guild, title: str, description: str, color: Color = Color.teal()):
-        embed = Embed(title=title, description=description, color=color, timestamp=datetime.datetime.utcnow())
-        embed.set_footer(text=get_footer())
+    async def log_canales(guild: discord.Guild, title: str, description: str, color: Color = Color.teal(), author: discord.Member = None, target: str = None):
+        embed = Logger.create_base_embed(title, description, color, author, target)
         await Logger.send_log(guild, Config.LOG_CANALES, embed)
 
     @staticmethod
-    async def log_invitaciones(guild: discord.Guild, title: str, description: str, color: Color = Color.dark_teal()):
-        embed = Embed(title=title, description=description, color=color, timestamp=datetime.datetime.utcnow())
-        embed.set_footer(text=get_footer())
+    async def log_invitaciones(guild: discord.Guild, title: str, description: str, color: Color = Color.dark_teal(), author: discord.Member = None, target: str = None):
+        embed = Logger.create_base_embed(title, description, color, author, target)
         await Logger.send_log(guild, Config.LOG_INVITACIONES, embed)
 
     @staticmethod
-    async def log_mensajes(guild: discord.Guild, title: str, description: str, color: Color = Color.orange()):
-        embed = Embed(title=title, description=description, color=color, timestamp=datetime.datetime.utcnow())
-        embed.set_footer(text=get_footer())
+    async def log_mensajes(guild: discord.Guild, title: str, description: str, color: Color = Color.orange(), author: discord.Member = None, target: str = None):
+        embed = Logger.create_base_embed(title, description, color, author, target)
         await Logger.send_log(guild, Config.LOG_MENSAJES, embed)
 
     @staticmethod
-    async def log_tickets(guild: discord.Guild, title: str, description: str, color: Color = Color.blurple()):
-        embed = Embed(title=title, description=description, color=color, timestamp=datetime.datetime.utcnow())
-        embed.set_footer(text=get_footer())
+    async def log_tickets(guild: discord.Guild, title: str, description: str, color: Color = Color.blurple(), author: discord.Member = None, target: str = None):
+        embed = Logger.create_base_embed(title, description, color, author, target)
         await Logger.send_log(guild, Config.LOG_TICKETS, embed)
 
     @staticmethod
@@ -255,7 +257,9 @@ class Logger:
             color=Color.blurple(),
             timestamp=datetime.datetime.utcnow()
         )
-        embed.add_field(name="Transcripción", value=transcript, inline=False)
+        embed.add_field(name="📅 Fecha/Hora (UTC)", value=datetime.datetime.utcnow().strftime("%d/%m/%Y %H:%M:%S"), inline=False)
+        embed.add_field(name="👤 Cerrado por", value=f"{closer.mention} ({closer.id})", inline=False)
+        embed.add_field(name="📝 Transcripción", value=transcript, inline=False)
         embed.set_footer(text=get_footer())
         await Logger.send_log(guild, Config.LOG_TICKETS, embed)
 
@@ -344,6 +348,15 @@ async def get_roblox_avatar(user_id: int) -> Optional[str]:
             if data.get("data") and len(data["data"]) > 0:
                 return data["data"][0]["imageUrl"]
             return None
+
+async def get_audit_log_moderator(guild: discord.Guild, action: discord.AuditLogAction, target_id: int) -> Optional[discord.Member]:
+    try:
+        async for entry in guild.audit_logs(action=action, limit=10):
+            if entry.target.id == target_id:
+                return entry.user
+    except:
+        pass
+    return None
 
 # ===================== EVALUADOR DE VERIFICACIÓN =====================
 class VerificationEvaluator:
@@ -937,6 +950,7 @@ class VerificationReviewView(ui.View):
 async def on_ready():
     await db.init()
     print(f"Bot conectado como {bot.user}")
+    print(f"Intents activos: reactions={intents.reactions}, members={intents.members}, message_content={intents.message_content}")
     try:
         synced = await bot.tree.sync()
         print(f"Comandos sincronizados: {len(synced)}")
@@ -945,18 +959,17 @@ async def on_ready():
 
 @bot.event
 async def on_member_join(member):
-    embed = Embed(
+    embed = Logger.create_base_embed(
         title="👤 Miembro unido",
-        description=f"**Usuario:** {member.mention} ({member.id})\n"
+        description=f"**Miembro:** {member.mention} ({member.id})\n"
                     f"**Cuenta creada:** {member.created_at.strftime('%d/%m/%Y %H:%M:%S')}",
         color=Color.green(),
-        timestamp=datetime.datetime.utcnow()
+        target=f"{member.mention} ({member.id})"
     )
     embed.set_thumbnail(url=member.display_avatar.url)
-    embed.set_footer(text=get_footer())
     await Logger.send_log(member.guild, Config.LOG_MIEMBROS, embed)
 
-    # También enviar mensaje de bienvenida
+    # Mensaje de bienvenida
     guild = member.guild
     channel = guild.get_channel(Config.CH_BIENVENIDAS)
     if channel:
@@ -983,15 +996,14 @@ async def on_member_join(member):
 
 @bot.event
 async def on_member_remove(member):
-    embed = Embed(
+    embed = Logger.create_base_embed(
         title="👤 Miembro salido",
-        description=f"**Usuario:** {member.mention} ({member.id})\n"
+        description=f"**Miembro:** {member.mention} ({member.id})\n"
                     f"**Rol más alto:** {member.top_role.mention if member.top_role else 'Ninguno'}",
         color=Color.red(),
-        timestamp=datetime.datetime.utcnow()
+        target=f"{member.mention} ({member.id})"
     )
     embed.set_thumbnail(url=member.display_avatar.url)
-    embed.set_footer(text=get_footer())
     await Logger.send_log(member.guild, Config.LOG_MIEMBROS, embed)
 
 @bot.event
@@ -999,57 +1011,53 @@ async def on_member_update(before, after):
     if before.guild is None:
         return
     if before.nick != after.nick:
-        embed = Embed(
+        embed = Logger.create_base_embed(
             title="✏️ Apodo cambiado",
-            description=f"**Usuario:** {after.mention} ({after.id})\n"
+            description=f"**Miembro:** {after.mention} ({after.id})\n"
                         f"**Antes:** {before.nick if before.nick else 'Ninguno'}\n"
                         f"**Después:** {after.nick if after.nick else 'Ninguno'}",
             color=Color.blue(),
-            timestamp=datetime.datetime.utcnow()
+            target=f"{after.mention} ({after.id})"
         )
-        embed.set_footer(text=get_footer())
         await Logger.send_log(after.guild, Config.LOG_MIEMBROS, embed)
 
     if before.roles != after.roles:
         added = [r for r in after.roles if r not in before.roles]
         removed = [r for r in before.roles if r not in after.roles]
-        desc = f"**Usuario:** {after.mention} ({after.id})\n"
+        desc = f"**Miembro:** {after.mention} ({after.id})\n"
         if added:
             desc += f"**Roles añadidos:** {', '.join([r.mention for r in added])}\n"
         if removed:
             desc += f"**Roles eliminados:** {', '.join([r.mention for r in removed])}"
-        embed = Embed(
+        embed = Logger.create_base_embed(
             title="🔄 Roles actualizados",
             description=desc,
             color=Color.gold(),
-            timestamp=datetime.datetime.utcnow()
+            target=f"{after.mention} ({after.id})"
         )
-        embed.set_footer(text=get_footer())
         await Logger.send_log(after.guild, Config.LOG_MIEMBROS, embed)
 
 @bot.event
 async def on_guild_role_create(role):
-    embed = Embed(
+    embed = Logger.create_base_embed(
         title="➕ Rol creado",
-        description=f"**Nombre:** {role.mention} ({role.id})\n"
+        description=f"**Rol:** {role.mention} ({role.id})\n"
                     f"**Color:** {role.color}\n"
                     f"**Mencionable:** {role.mentionable}",
         color=Color.green(),
-        timestamp=datetime.datetime.utcnow()
+        target=f"{role.mention} ({role.id})"
     )
-    embed.set_footer(text=get_footer())
     await Logger.send_log(role.guild, Config.LOG_ROLES, embed)
 
 @bot.event
 async def on_guild_role_delete(role):
-    embed = Embed(
+    embed = Logger.create_base_embed(
         title="➖ Rol eliminado",
-        description=f"**Nombre:** {role.name} ({role.id})\n"
+        description=f"**Rol:** {role.name} ({role.id})\n"
                     f"**Color:** {role.color}",
         color=Color.red(),
-        timestamp=datetime.datetime.utcnow()
+        target=f"{role.name} ({role.id})"
     )
-    embed.set_footer(text=get_footer())
     await Logger.send_log(role.guild, Config.LOG_ROLES, embed)
 
 @bot.event
@@ -1062,13 +1070,12 @@ async def on_guild_role_update(before, after):
     if before.mentionable != after.mentionable:
         changes.append(f"**Mencionable:** {before.mentionable} → {after.mentionable}")
     if changes:
-        embed = Embed(
+        embed = Logger.create_base_embed(
             title="🔄 Rol actualizado",
             description=f"**Rol:** {after.mention} ({after.id})\n" + "\n".join(changes),
             color=Color.blue(),
-            timestamp=datetime.datetime.utcnow()
+            target=f"{after.mention} ({after.id})"
         )
-        embed.set_footer(text=get_footer())
         await Logger.send_log(after.guild, Config.LOG_ROLES, embed)
 
 @bot.event
@@ -1076,84 +1083,76 @@ async def on_guild_emojis_update(guild, before, after):
     added = [e for e in after if e not in before]
     removed = [e for e in before if e not in after]
     for emoji in added:
-        embed = Embed(
+        embed = Logger.create_base_embed(
             title="➕ Emoji creado",
             description=f"**Nombre:** {emoji.name} ({emoji.id})\n"
                         f"**Animado:** {emoji.animated}",
             color=Color.green(),
-            timestamp=datetime.datetime.utcnow()
+            target=f"{emoji.name} ({emoji.id})"
         )
         embed.set_thumbnail(url=str(emoji.url))
-        embed.set_footer(text=get_footer())
         await Logger.send_log(guild, Config.LOG_EMOJIS, embed)
     for emoji in removed:
-        embed = Embed(
+        embed = Logger.create_base_embed(
             title="➖ Emoji eliminado",
             description=f"**Nombre:** {emoji.name} ({emoji.id})",
             color=Color.red(),
-            timestamp=datetime.datetime.utcnow()
+            target=f"{emoji.name} ({emoji.id})"
         )
-        embed.set_footer(text=get_footer())
         await Logger.send_log(guild, Config.LOG_EMOJIS, embed)
 
 @bot.event
 async def on_reaction_add(reaction, user):
-    if user.bot:
+    if user.bot or reaction.message.guild is None:
         return
-    if reaction.message.guild is None:
-        return
-    embed = Embed(
+    embed = Logger.create_base_embed(
         title="➕ Reacción añadida",
         description=f"**Usuario:** {user.mention} ({user.id})\n"
                     f"**Mensaje:** [Ir al mensaje]({reaction.message.jump_url})\n"
                     f"**Reacción:** {reaction.emoji}",
         color=Color.green(),
-        timestamp=datetime.datetime.utcnow()
+        author=user,
+        target=f"{user.mention} ({user.id})"
     )
-    embed.set_footer(text=get_footer())
     await Logger.send_log(reaction.message.guild, Config.LOG_EMOJIS, embed)
 
 @bot.event
 async def on_reaction_remove(reaction, user):
-    if user.bot:
+    if user.bot or reaction.message.guild is None:
         return
-    if reaction.message.guild is None:
-        return
-    embed = Embed(
+    embed = Logger.create_base_embed(
         title="➖ Reacción eliminada",
         description=f"**Usuario:** {user.mention} ({user.id})\n"
                     f"**Mensaje:** [Ir al mensaje]({reaction.message.jump_url})\n"
                     f"**Reacción:** {reaction.emoji}",
         color=Color.red(),
-        timestamp=datetime.datetime.utcnow()
+        author=user,
+        target=f"{user.mention} ({user.id})"
     )
-    embed.set_footer(text=get_footer())
     await Logger.send_log(reaction.message.guild, Config.LOG_EMOJIS, embed)
 
 @bot.event
 async def on_guild_channel_create(channel):
-    embed = Embed(
+    embed = Logger.create_base_embed(
         title="➕ Canal creado",
-        description=f"**Nombre:** {channel.mention} ({channel.id})\n"
+        description=f"**Canal:** {channel.mention} ({channel.id})\n"
                     f"**Tipo:** {channel.type}\n"
                     f"**Categoría:** {channel.category.name if channel.category else 'Ninguna'}",
         color=Color.green(),
-        timestamp=datetime.datetime.utcnow()
+        target=f"{channel.mention} ({channel.id})"
     )
-    embed.set_footer(text=get_footer())
     await Logger.send_log(channel.guild, Config.LOG_CANALES, embed)
 
 @bot.event
 async def on_guild_channel_delete(channel):
-    embed = Embed(
+    embed = Logger.create_base_embed(
         title="➖ Canal eliminado",
-        description=f"**Nombre:** {channel.name} ({channel.id})\n"
+        description=f"**Canal:** {channel.name} ({channel.id})\n"
                     f"**Tipo:** {channel.type}\n"
                     f"**Categoría:** {channel.category.name if channel.category else 'Ninguna'}",
         color=Color.red(),
-        timestamp=datetime.datetime.utcnow()
+        target=f"{channel.name} ({channel.id})"
     )
-    embed.set_footer(text=get_footer())
     await Logger.send_log(channel.guild, Config.LOG_CANALES, embed)
 
 @bot.event
@@ -1164,18 +1163,17 @@ async def on_guild_channel_update(before, after):
     if before.category != after.category:
         changes.append(f"**Categoría:** {before.category.name if before.category else 'Ninguna'} → {after.category.name if after.category else 'Ninguna'}")
     if changes:
-        embed = Embed(
+        embed = Logger.create_base_embed(
             title="🔄 Canal actualizado",
             description=f"**Canal:** {after.mention} ({after.id})\n" + "\n".join(changes),
             color=Color.blue(),
-            timestamp=datetime.datetime.utcnow()
+            target=f"{after.mention} ({after.id})"
         )
-        embed.set_footer(text=get_footer())
         await Logger.send_log(after.guild, Config.LOG_CANALES, embed)
 
 @bot.event
 async def on_invite_create(invite):
-    embed = Embed(
+    embed = Logger.create_base_embed(
         title="➕ Invitación creada",
         description=f"**Creador:** {invite.inviter.mention if invite.inviter else 'Desconocido'}\n"
                     f"**Código:** {invite.code}\n"
@@ -1183,83 +1181,84 @@ async def on_invite_create(invite):
                     f"**Usos máximos:** {invite.max_uses if invite.max_uses else 'Ilimitado'}\n"
                     f"**Expira:** {invite.expires_at.strftime('%d/%m/%Y %H:%M') if invite.expires_at else 'Nunca'}",
         color=Color.green(),
-        timestamp=datetime.datetime.utcnow()
+        author=invite.inviter,
+        target=f"{invite.code}"
     )
-    embed.set_footer(text=get_footer())
     await Logger.send_log(invite.guild, Config.LOG_INVITACIONES, embed)
 
 @bot.event
 async def on_invite_delete(invite):
-    embed = Embed(
+    embed = Logger.create_base_embed(
         title="➖ Invitación eliminada",
         description=f"**Código:** {invite.code}\n"
                     f"**Canal:** {invite.channel.mention if invite.channel else 'Desconocido'}\n"
                     f"**Usos:** {invite.uses}",
         color=Color.red(),
-        timestamp=datetime.datetime.utcnow()
+        target=f"{invite.code}"
     )
-    embed.set_footer(text=get_footer())
     await Logger.send_log(invite.guild, Config.LOG_INVITACIONES, embed)
 
 @bot.event
-async def on_member_ban(guild, user):
-    embed = Embed(
+async def on_member_ban(guild: discord.Guild, user: discord.User):
+    moderator = await get_audit_log_moderator(guild, discord.AuditLogAction.ban, user.id)
+    desc = f"**Usuario baneado:** {user.mention} ({user.id})"
+    if moderator:
+        desc += f"\n**Moderador:** {moderator.mention} ({moderator.id})"
+    embed = Logger.create_base_embed(
         title="🔨 Usuario baneado",
-        description=f"**Usuario:** {user.mention} ({user.id})",
+        description=desc,
         color=Color.dark_red(),
-        timestamp=datetime.datetime.utcnow()
+        author=moderator,
+        target=f"{user.mention} ({user.id})"
     )
-    embed.set_footer(text=get_footer())
     await Logger.send_log(guild, Config.LOG_MODERACION, embed)
 
 @bot.event
-async def on_member_unban(guild, user):
-    embed = Embed(
+async def on_member_unban(guild: discord.Guild, user: discord.User):
+    moderator = await get_audit_log_moderator(guild, discord.AuditLogAction.unban, user.id)
+    desc = f"**Usuario desbaneado:** {user.mention} ({user.id})"
+    if moderator:
+        desc += f"\n**Moderador:** {moderator.mention} ({moderator.id})"
+    embed = Logger.create_base_embed(
         title="🔓 Usuario desbaneado",
-        description=f"**Usuario:** {user.mention} ({user.id})",
+        description=desc,
         color=Color.green(),
-        timestamp=datetime.datetime.utcnow()
+        author=moderator,
+        target=f"{user.mention} ({user.id})"
     )
-    embed.set_footer(text=get_footer())
     await Logger.send_log(guild, Config.LOG_MODERACION, embed)
 
 @bot.event
 async def on_message_delete(message):
-    if message.guild is None:
+    if message.guild is None or message.author.bot:
         return
-    if message.author.bot:
-        return
-    embed = Embed(
+    embed = Logger.create_base_embed(
         title="🗑️ Mensaje eliminado",
-        description=f"**Autor:** {message.author.mention} ({message.author.id})\n"
+        description=f"**Autor del mensaje:** {message.author.mention} ({message.author.id})\n"
                     f"**Canal:** {message.channel.mention}\n"
                     f"**Contenido:** {message.content if message.content else '(Sin contenido)'}",
         color=Color.red(),
-        timestamp=datetime.datetime.utcnow()
+        author=message.author,
+        target=f"{message.author.mention} ({message.author.id})"
     )
     if message.attachments:
         embed.add_field(name="Archivos adjuntos", value="\n".join([a.url for a in message.attachments]), inline=False)
-    embed.set_footer(text=get_footer())
     await Logger.send_log(message.guild, Config.LOG_MENSAJES, embed)
 
 @bot.event
 async def on_message_edit(before, after):
-    if before.guild is None:
+    if before.guild is None or before.author.bot or before.content == after.content:
         return
-    if before.author.bot:
-        return
-    if before.content == after.content:
-        return
-    embed = Embed(
+    embed = Logger.create_base_embed(
         title="✏️ Mensaje editado",
         description=f"**Autor:** {before.author.mention} ({before.author.id})\n"
                     f"**Canal:** {before.channel.mention}\n"
                     f"**Antes:** {before.content if before.content else '(Vacío)'}\n"
                     f"**Después:** {after.content if after.content else '(Vacío)'}",
         color=Color.orange(),
-        timestamp=datetime.datetime.utcnow()
+        author=before.author,
+        target=f"{before.author.mention} ({before.author.id})"
     )
-    embed.set_footer(text=get_footer())
     await Logger.send_log(before.guild, Config.LOG_MENSAJES, embed)
 
 @bot.event
@@ -1270,14 +1269,13 @@ async def on_bulk_message_delete(messages):
     if guild is None:
         return
     channel = messages[0].channel
-    embed = Embed(
+    embed = Logger.create_base_embed(
         title="📦 Mensajes eliminados en masa",
         description=f"**Canal:** {channel.mention}\n"
                     f"**Cantidad:** {len(messages)} mensajes",
         color=Color.dark_red(),
-        timestamp=datetime.datetime.utcnow()
+        target=f"Canal {channel.mention}"
     )
-    embed.set_footer(text=get_footer())
     await Logger.send_log(guild, Config.LOG_MENSAJES, embed)
 
 # ===================== PROCESO DE VERIFICACIÓN POR DM =====================
@@ -1354,7 +1352,7 @@ async def on_message(message):
 
             analysis = VerificationEvaluator.evaluate_all(answers)
 
-            guild = bot.get_guild(1452608365812514999)  # Cambia por el ID de tu servidor
+            guild = bot.get_guild(1452608365812514999)  # CAMBIA POR EL ID DE TU SERVIDOR
             if not guild:
                 guild = bot.guilds[0]
             channel_revision = guild.get_channel(Config.CH_REVISIONES_VERIFICACION)
@@ -1407,6 +1405,8 @@ async def on_message(message):
             else:
                 await message.channel.send("❌ No se encontró el canal de revisiones. Contacta con un administrador.")
             verification_sessions.pop(user_id, None)
+
+    await bot.process_commands(message)
 
 # ===================== COMANDOS =====================
 
