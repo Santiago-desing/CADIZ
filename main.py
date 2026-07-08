@@ -6,6 +6,7 @@ import asyncio
 import motor.motor_asyncio
 import datetime
 import os
+import traceback
 from typing import Optional, Dict, List, Any
 from bson import ObjectId
 
@@ -81,7 +82,7 @@ class Config:
     LOG_INVITACIONES = 1489589554032676884
     LOG_MENSAJES = 1489588046910459904
     LOG_TICKETS = 1489661308931674292
-    LOG_VALORACIONES = LOG_GENERAL  # Usamos el canal general para valoraciones, pero puedes crear uno específico
+    LOG_VALORACIONES = 1489589357580128436
 
     VERIFICATION_TIMEOUT = 1800
     SERVER_LOGO = "https://i.imgur.com/placeholder.png"
@@ -94,7 +95,7 @@ class Database:
         self.sanciones = self.db["sanciones"]
         self.server_state = self.db["server_state"]
         self.votacion = self.db["votacion"]
-        self.valoraciones = self.db["valoraciones"]  # Nueva colección
+        self.valoraciones = self.db["valoraciones"]
 
     async def init(self):
         if not await self.server_state.find_one({"key": "status"}):
@@ -150,8 +151,7 @@ class Database:
     async def set_votacion_timestamp(self, timestamp):
         await self.votacion.update_one({"key": "votacion"}, {"$set": {"timestamp": timestamp}}, upsert=True)
 
-    # Métodos para valoraciones
-    async def add_valoracion(self, user_id, user_name, staff_id, staff_name, puntuacion, comentario, ticket_id):
+    async def add_valoracion(self, user_id, user_name, staff_id, staff_name, puntuacion, comentario, ticket_id=None):
         doc = {
             "user_id": user_id,
             "user_name": user_name,
@@ -173,16 +173,13 @@ class Database:
         cursor = self.valoraciones.find({"staff_id": staff_id}).sort("fecha", -1)
         return await cursor.to_list(length=None)
 
-    async def get_valoracion_ticket(self, ticket_id):
-        return await self.valoraciones.find_one({"ticket_id": ticket_id})
-
     async def get_promedio_staff(self, staff_id):
         cursor = self.valoraciones.find({"staff_id": staff_id})
         valoraciones = await cursor.to_list(length=None)
         if not valoraciones:
             return None
         total = sum(v["puntuacion"] for v in valoraciones)
-        return total / len(valoraciones)
+        return round(total / len(valoraciones), 2)
 
 # ===================== BOT =====================
 intents = discord.Intents.default()
@@ -199,7 +196,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 db = Database(Config.MONGO_URI)
 verification_sessions: Dict[int, dict] = {}
-ticket_data: Dict[int, dict] = {}  # {channel_id: {"owner_id": int, "claimed_by": int, "locked": bool, "closed": bool}}
+ticket_data: Dict[int, dict] = {}
 
 # ===================== LOGGER =====================
 class Logger:
@@ -352,7 +349,6 @@ async def create_ticket_channel(guild: discord.Guild, category_id: int, user: di
     if not category:
         raise ValueError("Categoría no encontrada")
 
-    # COMPROBAR SI EL USUARIO YA TIENE UN TICKET ABIERTO
     if await has_active_ticket(user):
         raise ValueError("Ya tienes un ticket abierto. Cierra el actual antes de abrir otro.")
 
@@ -371,12 +367,10 @@ async def create_ticket_channel(guild: discord.Guild, category_id: int, user: di
         overwrites=overwrites,
         topic=topic
     )
-    # Guardar propietario en ticket_data
     ticket_data[channel.id] = {"owner_id": user.id, "claimed_by": None, "locked": False, "closed": False}
     return channel
 
 async def has_active_ticket(user: discord.Member) -> bool:
-    """Verifica si el usuario tiene un ticket abierto en cualquier categoría de tickets."""
     guild = user.guild
     for category_id in Config.TICKET_CATEGORIES:
         category = guild.get_channel(category_id)
@@ -384,10 +378,8 @@ async def has_active_ticket(user: discord.Member) -> bool:
             continue
         for channel in category.channels:
             if isinstance(channel, discord.TextChannel):
-                # Verificar si el usuario tiene permisos para leer/escribir en ese canal
                 perms = channel.permissions_for(user)
                 if perms.read_messages and perms.send_messages:
-                    # También comprobar que el canal esté en ticket_data y no esté cerrado
                     data = ticket_data.get(channel.id)
                     if data and not data.get("closed", False):
                         return True
@@ -426,7 +418,6 @@ class ValorarModal(ui.Modal, title="Valoración del staff"):
         self.ticket_id = ticket_id
 
     async def on_submit(self, interaction: Interaction):
-        # Validar que la puntuación sea un número entre 1 y 10
         try:
             punt = int(self.puntuacion.value)
             if punt < 1 or punt > 10:
@@ -436,12 +427,10 @@ class ValorarModal(ui.Modal, title="Valoración del staff"):
             await interaction.response.send_message("❌ Debes introducir un número válido entre 1 y 10.", ephemeral=True)
             return
 
-        # Obtener información del staff
         staff_member = interaction.guild.get_member(self.staff_id)
         staff_name = staff_member.display_name if staff_member else f"Staff ID {self.staff_id}"
 
-        # Guardar en la base de datos
-        valoracion_id = await db.add_valoracion(
+        await db.add_valoracion(
             user_id=self.user.id,
             user_name=self.user.display_name,
             staff_id=self.staff_id,
@@ -451,7 +440,6 @@ class ValorarModal(ui.Modal, title="Valoración del staff"):
             ticket_id=str(self.ticket_id)
         )
 
-        # Enviar confirmación al usuario
         embed_resp = Embed(
             title="✅ ¡Gracias por valorar!",
             description=f"Has valorado al staff con **{punt}/10**.\n"
@@ -461,7 +449,6 @@ class ValorarModal(ui.Modal, title="Valoración del staff"):
         embed_resp.set_footer(text=get_footer())
         await interaction.response.send_message(embed=embed_resp, ephemeral=True)
 
-        # Log de valoración
         embed_log = Embed(
             title="⭐ Nueva valoración de staff",
             description=f"**Usuario:** {self.user.mention} ({self.user.id})\n"
@@ -475,10 +462,21 @@ class ValorarModal(ui.Modal, title="Valoración del staff"):
         embed_log.set_footer(text=get_footer())
         await Logger.send_log(interaction.guild, Config.LOG_VALORACIONES, embed_log)
 
+        if staff_member:
+            embed_dm = Embed(
+                title="⭐ Has recibido una valoración",
+                description=f"**Usuario:** {self.user.mention} ({self.user.id})\n"
+                            f"**Puntuación:** {punt}/10\n"
+                            f"**Comentario:** {self.comentario.value if self.comentario.value else 'Sin comentario'}",
+                color=Color.gold()
+            )
+            embed_dm.set_footer(text=get_footer())
+            await send_dm(staff_member, embed=embed_dm)
+
 # ===================== VISTA DE VALORACIÓN =====================
 class ValorarView(ui.View):
     def __init__(self, user: discord.Member, staff_id: int, ticket_id: int):
-        super().__init__(timeout=300)  # 5 minutos para valorar
+        super().__init__(timeout=300)
         self.user = user
         self.staff_id = staff_id
         self.ticket_id = ticket_id
@@ -492,11 +490,9 @@ class ValorarView(ui.View):
         if self.valorado:
             await interaction.response.send_message("Ya has valorado este ticket.", ephemeral=True)
             return
-        # Abrir el modal
         modal = ValorarModal(self.user, self.staff_id, self.ticket_id)
         await interaction.response.send_modal(modal)
         self.valorado = True
-        # Desactivar el botón después de usarlo
         self.children[0].disabled = True
         await interaction.message.edit(view=self)
 
@@ -624,8 +620,6 @@ class VerificationEvaluator:
         }
 
 # ===================== VIEWS =====================
-
-# --- Confirmación para verificación ---
 class ConfirmView(ui.View):
     def __init__(self, user_id: int, interaction: Interaction):
         super().__init__(timeout=60.0)
@@ -702,7 +696,6 @@ class ConfirmView(ui.View):
                 except:
                     pass
 
-# --- Panel de Verificación ---
 class VerificationPanelView(ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -793,7 +786,6 @@ class VerificationPanelView(ui.View):
         except Exception as e:
             await interaction.response.send_message(f"❌ Error al crear el ticket: {e}", ephemeral=True)
 
-# --- Panel de Tickets (Select) ---
 class TicketSelectMenu(ui.Select):
     def __init__(self):
         self.options_data = [
@@ -873,7 +865,6 @@ class TicketPanelView(ui.View):
         super().__init__(timeout=None)
         self.add_item(TicketSelectMenu())
 
-# --- Control de Tickets (con archivado y valoración) ---
 class TicketControlView(ui.View):
     def __init__(self, channel_id: int):
         super().__init__(timeout=None)
@@ -892,23 +883,19 @@ class TicketControlView(ui.View):
             await interaction.response.send_message("Este canal no es un ticket válido.", ephemeral=True)
             return
 
-        # Obtener datos del ticket
         data = ticket_data.get(self.channel_id, {})
         owner_id = data.get("owner_id")
         claimed_by = data.get("claimed_by")
 
-        # Marcar como cerrado
         data["closed"] = True
         ticket_data[self.channel_id] = data
 
-        # Archivar y borrar
         await Logger.archive_ticket(channel, interaction.user)
 
-        # Enviar valoración al usuario si existe
         if owner_id:
             owner = interaction.guild.get_member(owner_id)
             if owner:
-                staff_id = claimed_by if claimed_by else interaction.user.id  # Si no está reclamado, el que cierra
+                staff_id = claimed_by if claimed_by else interaction.user.id
                 embed_val = Embed(
                     title="📝 ¡Gracias por usar nuestro sistema de tickets!",
                     description="Nos gustaría conocer tu opinión sobre la atención recibida.\n"
@@ -1031,7 +1018,6 @@ class TicketControlView(ui.View):
         await channel.send(embed=embed)
         await interaction.response.send_message("Ticket desbloqueado.", ephemeral=True)
 
-# --- Revisión de Verificación ---
 class VerificationReviewView(ui.View):
     def __init__(self, user_id: int, roblox_name: str, roblox_id: int, answers: dict, analysis: dict):
         super().__init__(timeout=None)
@@ -1117,7 +1103,6 @@ class VerificationReviewView(ui.View):
         await interaction.response.send_message("Verificación denegada.", ephemeral=True)
 
 # ===================== EVENTOS DE LOGS =====================
-
 @bot.event
 async def on_ready():
     await db.init()
@@ -1141,7 +1126,6 @@ async def on_member_join(member):
     embed.set_thumbnail(url=member.display_avatar.url)
     await Logger.send_log(member.guild, Config.LOG_MIEMBROS, embed)
 
-    # Mensaje de bienvenida
     guild = member.guild
     channel = guild.get_channel(Config.CH_BIENVENIDAS)
     if channel:
@@ -1450,138 +1434,167 @@ async def on_bulk_message_delete(messages):
     )
     await Logger.send_log(guild, Config.LOG_MENSAJES, embed)
 
-# ===================== PROCESO DE VERIFICACIÓN POR DM =====================
+# ===================== PROCESO DE VERIFICACIÓN POR DM (MEJORADO) =====================
 @bot.event
 async def on_message(message):
-    if isinstance(message.channel, discord.DMChannel) and message.author.id in verification_sessions:
-        user_id = message.author.id
-        session = verification_sessions[user_id]
-        step = session["step"]
-        answers = session["answers"]
+    try:
+        # Solo procesar mensajes DM de usuarios en sesión de verificación
+        if isinstance(message.channel, discord.DMChannel) and message.author.id in verification_sessions:
+            user_id = message.author.id
+            session = verification_sessions[user_id]
+            step = session.get("step")
+            answers = session.get("answers", {})
 
-        if step == 1:
-            username = message.content.strip()
-            roblox_id = await check_roblox_user(username)
-            if not roblox_id:
-                await message.channel.send("❌ El usuario de Roblox no existe. Por favor, vuelve a iniciar el proceso con el botón COMENZAR.")
-                verification_sessions.pop(user_id, None)
-                return
-            answers["roblox_user"] = username
-            answers["roblox_id"] = roblox_id
-            session["step"] = 2
-            avatar_url = await get_roblox_avatar(roblox_id)
-            if avatar_url:
-                embed_confirm = Embed(
-                    title="✅ Usuario de Roblox verificado",
-                    description=f"**Nombre:** {username}\n**ID:** {roblox_id}",
-                    color=Color.green()
-                )
-                embed_confirm.set_thumbnail(url=avatar_url)
-                embed_confirm.set_footer(text=get_footer())
-                await message.channel.send(embed=embed_confirm)
-            else:
-                await message.channel.send(f"✅ Usuario de Roblox verificado (ID: {roblox_id}).")
-            await message.channel.send("**Pregunta 2:** ¿Cómo te has metido al servidor?")
+            print(f"[Verificación] Paso {step} - Usuario {message.author.name} respondió: {message.content[:50]}...")
 
-        elif step == 2:
-            answers["como_metiste"] = message.content.strip()
-            session["step"] = 3
-            await message.channel.send("**Pregunta 3:** Del 1 al 10, ¿cuánto sabes rolear?")
+            if step == 1:
+                username = message.content.strip()
+                try:
+                    roblox_id = await check_roblox_user(username)
+                except Exception as e:
+                    await message.channel.send("❌ Error al verificar usuario de Roblox. Intenta de nuevo más tarde.")
+                    print(f"[Error] API Roblox falló: {e}")
+                    return
 
-        elif step == 3:
-            answers["nivel_roleo"] = message.content.strip()
-            session["step"] = 4
-            await message.channel.send("**Pregunta 4:** ¿Qué significa MG? Pon un ejemplo.")
+                if not roblox_id:
+                    await message.channel.send("❌ El usuario de Roblox no existe. Por favor, vuelve a iniciar el proceso con el botón COMENZAR.")
+                    verification_sessions.pop(user_id, None)
+                    return
 
-        elif step == 4:
-            answers["mg"] = message.content.strip()
-            session["step"] = 5
-            await message.channel.send("**Pregunta 5:** ¿Qué significa PG? Pon un ejemplo.")
+                answers["roblox_user"] = username
+                answers["roblox_id"] = roblox_id
+                session["step"] = 2
 
-        elif step == 5:
-            answers["pg"] = message.content.strip()
-            session["step"] = 6
-            await message.channel.send("**Pregunta 6:** ¿Qué harías si ves a alguien haciendo antirol?")
+                avatar_url = await get_roblox_avatar(roblox_id)
+                if avatar_url:
+                    embed_confirm = Embed(
+                        title="✅ Usuario de Roblox verificado",
+                        description=f"**Nombre:** {username}\n**ID:** {roblox_id}",
+                        color=Color.green()
+                    )
+                    embed_confirm.set_thumbnail(url=avatar_url)
+                    embed_confirm.set_footer(text=get_footer())
+                    await message.channel.send(embed=embed_confirm)
+                else:
+                    await message.channel.send(f"✅ Usuario de Roblox verificado (ID: {roblox_id}).")
 
-        elif step == 6:
-            answers["antirol"] = message.content.strip()
-            session["step"] = 7
-            await message.channel.send("**Pregunta 7:** ¿Qué te gustaría ser dentro del servidor?")
+                await message.channel.send("**Pregunta 2:** ¿Cómo te has metido al servidor?")
 
-        elif step == 7:
-            answers["aspiracion"] = message.content.strip()
-            session["step"] = 8
-            await message.channel.send("**Pregunta 8:** ¿Una vez verificado aceptas que no podrás realizar ningún antirol? (responde sí o no)")
+            elif step == 2:
+                answers["como_metiste"] = message.content.strip()
+                session["step"] = 3
+                await message.channel.send("**Pregunta 3:** Del 1 al 10, ¿cuánto sabes rolear?")
 
-        elif step == 8:
-            respuesta = message.content.strip().lower()
-            if respuesta not in ["sí", "si", "no"]:
-                await message.channel.send("Por favor, responde con 'sí' o 'no'.")
-                return
-            answers["acepta_antirol"] = respuesta in ["sí", "si"]
-            if session.get("timeout_task"):
-                session["timeout_task"].cancel()
+            elif step == 3:
+                answers["nivel_roleo"] = message.content.strip()
+                session["step"] = 4
+                await message.channel.send("**Pregunta 4:** ¿Qué significa MG? Pon un ejemplo.")
 
-            analysis = VerificationEvaluator.evaluate_all(answers)
+            elif step == 4:
+                answers["mg"] = message.content.strip()
+                session["step"] = 5
+                await message.channel.send("**Pregunta 5:** ¿Qué significa PG? Pon un ejemplo.")
 
-            guild = bot.get_guild(1452608365812514999)  # CAMBIA POR EL ID DE TU SERVIDOR
-            if not guild:
-                guild = bot.guilds[0]
-            channel_revision = guild.get_channel(Config.CH_REVISIONES_VERIFICACION)
-            if channel_revision:
-                preguntas_respuestas = (
-                    f"**P1: Usuario de Roblox**\n{answers['roblox_user']}\n\n"
-                    f"**P2: ¿Cómo te has metido al servidor?**\n{answers['como_metiste']}\n\n"
-                    f"**P3: Del 1 al 10, ¿cuánto sabes rolear?**\n{answers['nivel_roleo']}\n\n"
-                    f"**P4: ¿Qué significa MG? Pon un ejemplo.**\n{answers['mg']}\n\n"
-                    f"**P5: ¿Qué significa PG? Pon un ejemplo.**\n{answers['pg']}\n\n"
-                    f"**P6: ¿Qué harías si ves a alguien haciendo antirol?**\n{answers['antirol']}\n\n"
-                    f"**P7: ¿Qué te gustaría ser dentro del servidor?**\n{answers['aspiracion']}\n\n"
-                    f"**P8: ¿Una vez verificado aceptas que no podrás realizar ningún antirol?**\n{'Sí' if answers['acepta_antirol'] else 'No'}"
-                )
-                embed = Embed(
-                    title="📋 Revisión de Verificación",
-                    description=f"**Usuario:** {message.author.mention}\n**Roblox:** {answers['roblox_user']}",
-                    color=Color.blue()
-                )
-                embed.add_field(name="📋 Respuestas del formulario:", value=preguntas_respuestas, inline=False)
-                embed.add_field(
-                    name="📊 Análisis automático — REVISAR",
-                    value=f"**Puntuación total:** {analysis['total']}/95\n"
-                          f"**Metagaming:** {analysis['mg']}/20 pts\n"
-                          f"**Powergaming:** {analysis['pg']}/20 pts\n"
-                          f"**Fail RP:** {analysis['failrp']}/15 pts\n"
-                          f"**Situación práctica:** {analysis['situation']}/15 pts\n"
-                          f"**Compromiso:** {analysis['compromiso']}/10 pts\n"
-                          f"**Bonus calidad:** {analysis['bonus']}/15 pts\n"
-                          f"**Decisión sugerida:** {analysis['decision']}",
-                    inline=False
-                )
-                if analysis['alerts']:
+            elif step == 5:
+                answers["pg"] = message.content.strip()
+                session["step"] = 6
+                await message.channel.send("**Pregunta 6:** ¿Qué harías si ves a alguien haciendo antirol?")
+
+            elif step == 6:
+                answers["antirol"] = message.content.strip()
+                session["step"] = 7
+                await message.channel.send("**Pregunta 7:** ¿Qué te gustaría ser dentro del servidor?")
+
+            elif step == 7:
+                answers["aspiracion"] = message.content.strip()
+                session["step"] = 8
+                await message.channel.send("**Pregunta 8:** ¿Una vez verificado aceptas que no podrás realizar ningún antirol? (responde sí o no)")
+
+            elif step == 8:
+                respuesta = message.content.strip().lower()
+                if respuesta not in ["sí", "si", "no"]:
+                    await message.channel.send("Por favor, responde con 'sí' o 'no'.")
+                    return
+
+                answers["acepta_antirol"] = respuesta in ["sí", "si"]
+                if session.get("timeout_task"):
+                    session["timeout_task"].cancel()
+
+                analysis = VerificationEvaluator.evaluate_all(answers)
+
+                guild = bot.get_guild(1452608365812514999)  # CAMBIA POR EL ID DE TU SERVIDOR
+                if not guild:
+                    guild = bot.guilds[0]
+                channel_revision = guild.get_channel(Config.CH_REVISIONES_VERIFICACION)
+                if channel_revision:
+                    preguntas_respuestas = (
+                        f"**P1: Usuario de Roblox**\n{answers['roblox_user']}\n\n"
+                        f"**P2: ¿Cómo te has metido al servidor?**\n{answers['como_metiste']}\n\n"
+                        f"**P3: Del 1 al 10, ¿cuánto sabes rolear?**\n{answers['nivel_roleo']}\n\n"
+                        f"**P4: ¿Qué significa MG? Pon un ejemplo.**\n{answers['mg']}\n\n"
+                        f"**P5: ¿Qué significa PG? Pon un ejemplo.**\n{answers['pg']}\n\n"
+                        f"**P6: ¿Qué harías si ves a alguien haciendo antirol?**\n{answers['antirol']}\n\n"
+                        f"**P7: ¿Qué te gustaría ser dentro del servidor?**\n{answers['aspiracion']}\n\n"
+                        f"**P8: ¿Una vez verificado aceptas que no podrás realizar ningún antirol?**\n{'Sí' if answers['acepta_antirol'] else 'No'}"
+                    )
+                    embed = Embed(
+                        title="📋 Revisión de Verificación",
+                        description=f"**Usuario:** {message.author.mention}\n**Roblox:** {answers['roblox_user']}",
+                        color=Color.blue()
+                    )
+                    embed.add_field(name="📋 Respuestas del formulario:", value=preguntas_respuestas, inline=False)
                     embed.add_field(
-                        name="⚠️ Alertas",
-                        value="\n".join(f"• {alert}" for alert in analysis['alerts']),
+                        name="📊 Análisis automático — REVISAR",
+                        value=f"**Puntuación total:** {analysis['total']}/95\n"
+                              f"**Metagaming:** {analysis['mg']}/20 pts\n"
+                              f"**Powergaming:** {analysis['pg']}/20 pts\n"
+                              f"**Fail RP:** {analysis['failrp']}/15 pts\n"
+                              f"**Situación práctica:** {analysis['situation']}/15 pts\n"
+                              f"**Compromiso:** {analysis['compromiso']}/10 pts\n"
+                              f"**Bonus calidad:** {analysis['bonus']}/15 pts\n"
+                              f"**Decisión sugerida:** {analysis['decision']}",
                         inline=False
                     )
-                embed.add_field(name="📌 Motivo sugerido", value=analysis['motivo'], inline=False)
-                embed.set_footer(text=get_footer())
-                view = VerificationReviewView(
-                    user_id=message.author.id,
-                    roblox_name=answers['roblox_user'],
-                    roblox_id=answers['roblox_id'],
-                    answers=answers,
-                    analysis=analysis
-                )
-                await channel_revision.send(f"<@&{Config.STAFF_GENERAL}>", embed=embed, view=view)
-                await message.channel.send("✅ Tu verificación ha sido enviada a revisión. Espera la respuesta del staff.")
-            else:
-                await message.channel.send("❌ No se encontró el canal de revisiones. Contacta con un administrador.")
-            verification_sessions.pop(user_id, None)
+                    if analysis['alerts']:
+                        embed.add_field(
+                            name="⚠️ Alertas",
+                            value="\n".join(f"• {alert}" for alert in analysis['alerts']),
+                            inline=False
+                        )
+                    embed.add_field(name="📌 Motivo sugerido", value=analysis['motivo'], inline=False)
+                    embed.set_footer(text=get_footer())
+                    view = VerificationReviewView(
+                        user_id=message.author.id,
+                        roblox_name=answers['roblox_user'],
+                        roblox_id=answers['roblox_id'],
+                        answers=answers,
+                        analysis=analysis
+                    )
+                    await channel_revision.send(f"<@&{Config.STAFF_GENERAL}>", embed=embed, view=view)
+                    await message.channel.send("✅ Tu verificación ha sido enviada a revisión. Espera la respuesta del staff.")
+                else:
+                    await message.channel.send("❌ No se encontró el canal de revisiones. Contacta con un administrador.")
 
+                verification_sessions.pop(user_id, None)
+
+            # Guardar cambios
+            verification_sessions[user_id] = session
+            return  # Importante: no procesar como comando
+
+    except Exception as e:
+        print(f"[ERROR en verificación] {e}")
+        traceback.print_exc()
+        try:
+            await message.channel.send("❌ Ocurrió un error al procesar tu respuesta. Por favor, inicia de nuevo el proceso.")
+        except:
+            pass
+        if message.author.id in verification_sessions:
+            verification_sessions.pop(message.author.id, None)
+
+    # Procesar comandos (solo para mensajes de servidor, no DM)
     await bot.process_commands(message)
 
 # ===================== COMANDOS =====================
-
 @bot.tree.command(name="enviar-panel-verificacion", description="Envía el panel de verificación con botones")
 @app_commands.default_permissions(administrator=True)
 async def enviar_panel_verificacion(interaction: Interaction):
@@ -2181,6 +2194,62 @@ async def citar(interaction: Interaction, usuario: discord.Member, motivo: str, 
     embed_channel.set_footer(text=get_footer())
     await channel.send(f"{usuario.mention}", embed=embed_channel)
     await interaction.response.send_message(f"Citación enviada a {usuario.mention}.", ephemeral=True)
+
+@bot.tree.command(name="valorar-staff", description="Valora a un miembro del staff por su atención (1-10)")
+@app_commands.describe(
+    staff="Miembro del staff a valorar",
+    puntuacion="Puntuación del 1 al 10",
+    comentario="Comentario sobre la atención (opcional)"
+)
+async def valorar_staff(interaction: Interaction, staff: discord.Member, puntuacion: app_commands.Range[int, 1, 10], comentario: str = ""):
+    if interaction.user.id == staff.id:
+        await interaction.response.send_message("❌ No puedes valorarte a ti mismo.", ephemeral=True)
+        return
+
+    if not is_staff(staff):
+        await interaction.response.send_message("❌ El usuario seleccionado no es miembro del staff.", ephemeral=True)
+        return
+
+    await db.add_valoracion(
+        user_id=interaction.user.id,
+        user_name=interaction.user.display_name,
+        staff_id=staff.id,
+        staff_name=staff.display_name,
+        puntuacion=puntuacion,
+        comentario=comentario,
+        ticket_id=None
+    )
+
+    embed_resp = Embed(
+        title="✅ ¡Gracias por valorar!",
+        description=f"Has valorado a **{staff.display_name}** con **{puntuacion}/10**.\n"
+                    f"Comentario: {comentario if comentario else 'Sin comentario'}",
+        color=Color.green()
+    )
+    embed_resp.set_footer(text=get_footer())
+    await interaction.response.send_message(embed=embed_resp, ephemeral=True)
+
+    embed_log = Embed(
+        title="⭐ Nueva valoración de staff (manual)",
+        description=f"**Usuario:** {interaction.user.mention} ({interaction.user.id})\n"
+                    f"**Staff valorado:** {staff.mention} ({staff.id})\n"
+                    f"**Puntuación:** {puntuacion}/10\n"
+                    f"**Comentario:** {comentario if comentario else 'Sin comentario'}",
+        color=Color.gold(),
+        timestamp=datetime.datetime.utcnow()
+    )
+    embed_log.set_footer(text=get_footer())
+    await Logger.send_log(interaction.guild, Config.LOG_VALORACIONES, embed_log)
+
+    embed_dm = Embed(
+        title="⭐ Has recibido una valoración",
+        description=f"**Usuario:** {interaction.user.mention} ({interaction.user.id})\n"
+                    f"**Puntuación:** {puntuacion}/10\n"
+                    f"**Comentario:** {comentario if comentario else 'Sin comentario'}",
+        color=Color.gold()
+    )
+    embed_dm.set_footer(text=get_footer())
+    await send_dm(staff, embed=embed_dm)
 
 @bot.tree.command(name="sync", description="Sincroniza los comandos del bot (solo Propietario y Dueño)")
 async def sync(interaction: Interaction):
