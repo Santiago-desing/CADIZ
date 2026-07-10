@@ -198,7 +198,7 @@ db = Database(Config.MONGO_URI)
 verification_sessions: Dict[int, dict] = {}
 ticket_data: Dict[int, dict] = {}
 
-# ===================== LOGGER =====================
+# ===================== LOGGER CON PLANTILLA UNIFORME =====================
 class Logger:
     @staticmethod
     async def send_log(guild: discord.Guild, channel_id: int, embed: Embed):
@@ -210,64 +210,94 @@ class Logger:
                 pass
 
     @staticmethod
-    def create_base_embed(title: str, description: str, color: Color, author: Optional[discord.Member] = None, target: Optional[str] = None) -> Embed:
+    def create_log_embed(title: str, description: str, color: Color,
+                         author: Optional[discord.Member] = None,
+                         target: Optional[str] = None,
+                         extra_fields: Optional[List[tuple]] = None) -> Embed:
+        """
+        Crea un embed de log con la plantilla uniforme.
+        extra_fields: lista de tuplas (nombre, valor, inline)
+        """
         embed = Embed(title=title, description=description, color=color, timestamp=datetime.datetime.utcnow())
         embed.set_footer(text=get_footer())
+
+        # Campo común: Fecha/Hora
         embed.add_field(name="📅 Fecha/Hora (UTC)", value=datetime.datetime.utcnow().strftime("%d/%m/%Y %H:%M:%S"), inline=False)
+
+        # Campo común: Responsable (quién realizó la acción)
         if author:
             embed.add_field(name="👤 Responsable", value=f"{author.mention} ({author.id})", inline=False)
+
+        # Campo común: Sobre (destinatario o elemento afectado)
         if target:
             embed.add_field(name="🎯 Sobre", value=target, inline=False)
+
+        # Campos extra específicos del evento
+        if extra_fields:
+            for name, value, inline in extra_fields:
+                embed.add_field(name=name, value=value, inline=inline if inline is not None else False)
+
         return embed
 
+    # Métodos específicos para cada tipo de log, usando la plantilla
     @staticmethod
-    async def log_general(guild: discord.Guild, title: str, description: str, color: Color = Color.blue(), author: discord.Member = None, target: str = None):
-        embed = Logger.create_base_embed(title, description, color, author, target)
+    async def log_general(guild: discord.Guild, title: str, description: str, color: Color = Color.blue(),
+                          author: discord.Member = None, target: str = None, extra_fields: List[tuple] = None):
+        embed = Logger.create_log_embed(title, description, color, author, target, extra_fields)
         await Logger.send_log(guild, Config.LOG_GENERAL, embed)
 
     @staticmethod
-    async def log_moderacion(guild: discord.Guild, title: str, description: str, color: Color = Color.red(), author: discord.Member = None, target: str = None):
-        embed = Logger.create_base_embed(title, description, color, author, target)
+    async def log_moderacion(guild: discord.Guild, title: str, description: str, color: Color = Color.red(),
+                             author: discord.Member = None, target: str = None, extra_fields: List[tuple] = None):
+        embed = Logger.create_log_embed(title, description, color, author, target, extra_fields)
         await Logger.send_log(guild, Config.LOG_MODERACION, embed)
 
     @staticmethod
-    async def log_emojis(guild: discord.Guild, title: str, description: str, color: Color = Color.gold(), author: discord.Member = None, target: str = None):
-        embed = Logger.create_base_embed(title, description, color, author, target)
+    async def log_emojis(guild: discord.Guild, title: str, description: str, color: Color = Color.gold(),
+                         author: discord.Member = None, target: str = None, extra_fields: List[tuple] = None):
+        embed = Logger.create_log_embed(title, description, color, author, target, extra_fields)
         await Logger.send_log(guild, Config.LOG_EMOJIS, embed)
 
     @staticmethod
-    async def log_roles(guild: discord.Guild, title: str, description: str, color: Color = Color.purple(), author: discord.Member = None, target: str = None):
-        embed = Logger.create_base_embed(title, description, color, author, target)
+    async def log_roles(guild: discord.Guild, title: str, description: str, color: Color = Color.purple(),
+                        author: discord.Member = None, target: str = None, extra_fields: List[tuple] = None):
+        embed = Logger.create_log_embed(title, description, color, author, target, extra_fields)
         await Logger.send_log(guild, Config.LOG_ROLES, embed)
 
     @staticmethod
-    async def log_miembros(guild: discord.Guild, title: str, description: str, color: Color = Color.green(), author: discord.Member = None, target: str = None):
-        embed = Logger.create_base_embed(title, description, color, author, target)
+    async def log_miembros(guild: discord.Guild, title: str, description: str, color: Color = Color.green(),
+                           author: discord.Member = None, target: str = None, extra_fields: List[tuple] = None):
+        embed = Logger.create_log_embed(title, description, color, author, target, extra_fields)
         await Logger.send_log(guild, Config.LOG_MIEMBROS, embed)
 
     @staticmethod
-    async def log_canales(guild: discord.Guild, title: str, description: str, color: Color = Color.teal(), author: discord.Member = None, target: str = None):
-        embed = Logger.create_base_embed(title, description, color, author, target)
+    async def log_canales(guild: discord.Guild, title: str, description: str, color: Color = Color.teal(),
+                          author: discord.Member = None, target: str = None, extra_fields: List[tuple] = None):
+        embed = Logger.create_log_embed(title, description, color, author, target, extra_fields)
         await Logger.send_log(guild, Config.LOG_CANALES, embed)
 
     @staticmethod
-    async def log_invitaciones(guild: discord.Guild, title: str, description: str, color: Color = Color.dark_teal(), author: discord.Member = None, target: str = None):
-        embed = Logger.create_base_embed(title, description, color, author, target)
+    async def log_invitaciones(guild: discord.Guild, title: str, description: str, color: Color = Color.dark_teal(),
+                               author: discord.Member = None, target: str = None, extra_fields: List[tuple] = None):
+        embed = Logger.create_log_embed(title, description, color, author, target, extra_fields)
         await Logger.send_log(guild, Config.LOG_INVITACIONES, embed)
 
     @staticmethod
-    async def log_mensajes(guild: discord.Guild, title: str, description: str, color: Color = Color.orange(), author: discord.Member = None, target: str = None):
-        embed = Logger.create_base_embed(title, description, color, author, target)
+    async def log_mensajes(guild: discord.Guild, title: str, description: str, color: Color = Color.orange(),
+                           author: discord.Member = None, target: str = None, extra_fields: List[tuple] = None):
+        embed = Logger.create_log_embed(title, description, color, author, target, extra_fields)
         await Logger.send_log(guild, Config.LOG_MENSAJES, embed)
 
     @staticmethod
-    async def log_tickets(guild: discord.Guild, title: str, description: str, color: Color = Color.blurple(), author: discord.Member = None, target: str = None):
-        embed = Logger.create_base_embed(title, description, color, author, target)
+    async def log_tickets(guild: discord.Guild, title: str, description: str, color: Color = Color.blurple(),
+                          author: discord.Member = None, target: str = None, extra_fields: List[tuple] = None):
+        embed = Logger.create_log_embed(title, description, color, author, target, extra_fields)
         await Logger.send_log(guild, Config.LOG_TICKETS, embed)
 
     @staticmethod
-    async def log_valoracion(guild: discord.Guild, title: str, description: str, color: Color = Color.gold(), author: discord.Member = None, target: str = None):
-        embed = Logger.create_base_embed(title, description, color, author, target)
+    async def log_valoracion(guild: discord.Guild, title: str, description: str, color: Color = Color.gold(),
+                             author: discord.Member = None, target: str = None, extra_fields: List[tuple] = None):
+        embed = Logger.create_log_embed(title, description, color, author, target, extra_fields)
         await Logger.send_log(guild, Config.LOG_VALORACIONES, embed)
 
     @staticmethod
@@ -393,108 +423,6 @@ async def get_audit_log_moderator(guild: discord.Guild, action: discord.AuditLog
     except:
         pass
     return None
-
-# ===================== MODAL DE VALORACIÓN =====================
-class ValorarModal(ui.Modal, title="Valoración del staff"):
-    puntuacion = ui.TextInput(
-        label="Puntuación (1-10)",
-        placeholder="Ej: 8",
-        min_length=1,
-        max_length=2,
-        required=True
-    )
-    comentario = ui.TextInput(
-        label="Comentario (opcional)",
-        placeholder="¿Qué tal fue la atención?",
-        required=False,
-        style=discord.TextStyle.paragraph,
-        max_length=500
-    )
-
-    def __init__(self, user: discord.Member, staff_id: int, ticket_id: int):
-        super().__init__()
-        self.user = user
-        self.staff_id = staff_id
-        self.ticket_id = ticket_id
-
-    async def on_submit(self, interaction: Interaction):
-        try:
-            punt = int(self.puntuacion.value)
-            if punt < 1 or punt > 10:
-                await interaction.response.send_message("❌ La puntuación debe ser un número entre 1 y 10.", ephemeral=True)
-                return
-        except ValueError:
-            await interaction.response.send_message("❌ Debes introducir un número válido entre 1 y 10.", ephemeral=True)
-            return
-
-        staff_member = interaction.guild.get_member(self.staff_id)
-        staff_name = staff_member.display_name if staff_member else f"Staff ID {self.staff_id}"
-
-        await db.add_valoracion(
-            user_id=self.user.id,
-            user_name=self.user.display_name,
-            staff_id=self.staff_id,
-            staff_name=staff_name,
-            puntuacion=punt,
-            comentario=self.comentario.value,
-            ticket_id=str(self.ticket_id)
-        )
-
-        embed_resp = Embed(
-            title="✅ ¡Gracias por valorar!",
-            description=f"Has valorado al staff con **{punt}/10**.\n"
-                        f"Comentario: {self.comentario.value if self.comentario.value else 'Sin comentario'}",
-            color=Color.green()
-        )
-        embed_resp.set_footer(text=get_footer())
-        await interaction.response.send_message(embed=embed_resp, ephemeral=True)
-
-        embed_log = Embed(
-            title="⭐ Nueva valoración de staff",
-            description=f"**Usuario:** {self.user.mention} ({self.user.id})\n"
-                        f"**Staff valorado:** {staff_member.mention if staff_member else staff_name} ({self.staff_id})\n"
-                        f"**Puntuación:** {punt}/10\n"
-                        f"**Comentario:** {self.comentario.value if self.comentario.value else 'Sin comentario'}\n"
-                        f"**Ticket ID:** {self.ticket_id}",
-            color=Color.gold(),
-            timestamp=datetime.datetime.utcnow()
-        )
-        embed_log.set_footer(text=get_footer())
-        await Logger.send_log(interaction.guild, Config.LOG_VALORACIONES, embed_log)
-
-        if staff_member:
-            embed_dm = Embed(
-                title="⭐ Has recibido una valoración",
-                description=f"**Usuario:** {self.user.mention} ({self.user.id})\n"
-                            f"**Puntuación:** {punt}/10\n"
-                            f"**Comentario:** {self.comentario.value if self.comentario.value else 'Sin comentario'}",
-                color=Color.gold()
-            )
-            embed_dm.set_footer(text=get_footer())
-            await send_dm(staff_member, embed=embed_dm)
-
-# ===================== VISTA DE VALORACIÓN =====================
-class ValorarView(ui.View):
-    def __init__(self, user: discord.Member, staff_id: int, ticket_id: int):
-        super().__init__(timeout=300)
-        self.user = user
-        self.staff_id = staff_id
-        self.ticket_id = ticket_id
-        self.valorado = False
-
-    @ui.button(label="⭐ Valorar atención", style=ButtonStyle.primary, custom_id="valorar_staff")
-    async def valorar_button(self, interaction: Interaction, button: ui.Button):
-        if interaction.user.id != self.user.id:
-            await interaction.response.send_message("Este mensaje no es para ti.", ephemeral=True)
-            return
-        if self.valorado:
-            await interaction.response.send_message("Ya has valorado este ticket.", ephemeral=True)
-            return
-        modal = ValorarModal(self.user, self.staff_id, self.ticket_id)
-        await interaction.response.send_modal(modal)
-        self.valorado = True
-        self.children[0].disabled = True
-        await interaction.message.edit(view=self)
 
 # ===================== EVALUADOR DE VERIFICACIÓN =====================
 class VerificationEvaluator:
@@ -1018,12 +946,111 @@ class TicketControlView(ui.View):
         await channel.send(embed=embed)
         await interaction.response.send_message("Ticket desbloqueado.", ephemeral=True)
 
+class ValorarView(ui.View):
+    def __init__(self, user: discord.Member, staff_id: int, ticket_id: int):
+        super().__init__(timeout=300)
+        self.user = user
+        self.staff_id = staff_id
+        self.ticket_id = ticket_id
+        self.valorado = False
+
+    @ui.button(label="⭐ Valorar atención", style=ButtonStyle.primary, custom_id="valorar_staff")
+    async def valorar_button(self, interaction: Interaction, button: ui.Button):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("Este mensaje no es para ti.", ephemeral=True)
+            return
+        if self.valorado:
+            await interaction.response.send_message("Ya has valorado este ticket.", ephemeral=True)
+            return
+        modal = ValorarModal(self.user, self.staff_id, self.ticket_id)
+        await interaction.response.send_modal(modal)
+        self.valorado = True
+        self.children[0].disabled = True
+        await interaction.message.edit(view=self)
+
+class ValorarModal(ui.Modal, title="Valoración del staff"):
+    puntuacion = ui.TextInput(
+        label="Puntuación (1-10)",
+        placeholder="Ej: 8",
+        min_length=1,
+        max_length=2,
+        required=True
+    )
+    comentario = ui.TextInput(
+        label="Comentario (opcional)",
+        placeholder="¿Qué tal fue la atención?",
+        required=False,
+        style=discord.TextStyle.paragraph,
+        max_length=500
+    )
+
+    def __init__(self, user: discord.Member, staff_id: int, ticket_id: int):
+        super().__init__()
+        self.user = user
+        self.staff_id = staff_id
+        self.ticket_id = ticket_id
+
+    async def on_submit(self, interaction: Interaction):
+        try:
+            punt = int(self.puntuacion.value)
+            if punt < 1 or punt > 10:
+                await interaction.response.send_message("❌ La puntuación debe ser un número entre 1 y 10.", ephemeral=True)
+                return
+        except ValueError:
+            await interaction.response.send_message("❌ Debes introducir un número válido entre 1 y 10.", ephemeral=True)
+            return
+
+        staff_member = interaction.guild.get_member(self.staff_id)
+        staff_name = staff_member.display_name if staff_member else f"Staff ID {self.staff_id}"
+
+        await db.add_valoracion(
+            user_id=self.user.id,
+            user_name=self.user.display_name,
+            staff_id=self.staff_id,
+            staff_name=staff_name,
+            puntuacion=punt,
+            comentario=self.comentario.value,
+            ticket_id=str(self.ticket_id)
+        )
+
+        embed_resp = Embed(
+            title="✅ ¡Gracias por valorar!",
+            description=f"Has valorado al staff con **{punt}/10**.\n"
+                        f"Comentario: {self.comentario.value if self.comentario.value else 'Sin comentario'}",
+            color=Color.green()
+        )
+        embed_resp.set_footer(text=get_footer())
+        await interaction.response.send_message(embed=embed_resp, ephemeral=True)
+
+        embed_log = Embed(
+            title="⭐ Nueva valoración de staff",
+            description=f"**Usuario:** {self.user.mention} ({self.user.id})\n"
+                        f"**Staff valorado:** {staff_member.mention if staff_member else staff_name} ({self.staff_id})\n"
+                        f"**Puntuación:** {punt}/10\n"
+                        f"**Comentario:** {self.comentario.value if self.comentario.value else 'Sin comentario'}\n"
+                        f"**Ticket ID:** {self.ticket_id}",
+            color=Color.gold(),
+            timestamp=datetime.datetime.utcnow()
+        )
+        embed_log.set_footer(text=get_footer())
+        await Logger.send_log(interaction.guild, Config.LOG_VALORACIONES, embed_log)
+
+        if staff_member:
+            embed_dm = Embed(
+                title="⭐ Has recibido una valoración",
+                description=f"**Usuario:** {self.user.mention} ({self.user.id})\n"
+                            f"**Puntuación:** {punt}/10\n"
+                            f"**Comentario:** {self.comentario.value if self.comentario.value else 'Sin comentario'}",
+                color=Color.gold()
+            )
+            embed_dm.set_footer(text=get_footer())
+            await send_dm(staff_member, embed=embed_dm)
+
 class VerificationReviewView(ui.View):
-    def __init__(self, user_id: int, roblox_name: str, roblox_id: int, answers: dict, analysis: dict):
+    def __init__(self, user_id: int, roblox_name: str, answers: dict, analysis: dict):
         super().__init__(timeout=None)
         self.user_id = user_id
         self.roblox_name = roblox_name
-        self.roblox_id = roblox_id
         self.answers = answers
         self.analysis = analysis
 
@@ -1052,10 +1079,6 @@ class VerificationReviewView(ui.View):
         except:
             pass
 
-        avatar_url = await get_roblox_avatar(self.roblox_id)
-        if not avatar_url:
-            avatar_url = "https://www.roblox.com/asset-thumbnail/image?assetId=0&width=420&height=420&format=png"
-
         embed_dm = Embed(
             title="✅ ¡Verificación aprobada!",
             description=f"**Bienvenido/a a Cádiz RP, {member.mention}.**\n\n"
@@ -1063,14 +1086,12 @@ class VerificationReviewView(ui.View):
                         "Si necesitas ayuda, abre un ticket.",
             color=Color.green()
         )
-        embed_dm.add_field(name="👤 Usuario de Roblox", value=f"{self.roblox_name} (ID: {self.roblox_id})", inline=False)
-        embed_dm.set_thumbnail(url=avatar_url)
+        embed_dm.add_field(name="👤 Usuario de Roblox", value=self.roblox_name, inline=False)
         embed_dm.set_footer(text=get_footer())
         await send_dm(member, "", embed=embed_dm)
 
         embed_original = interaction.message.embeds[0] if interaction.message.embeds else Embed(title="Revisión de verificación")
-        embed_original.description = f"**Estado:** ✅ Aceptado por {interaction.user.mention}\n**Usuario:** {member.mention}\n**Roblox:** {self.roblox_name} (ID: {self.roblox_id})"
-        embed_original.set_thumbnail(url=avatar_url)
+        embed_original.description = f"**Estado:** ✅ Aceptado por {interaction.user.mention}\n**Usuario:** {member.mention}\n**Roblox:** {self.roblox_name}"
         embed_original.color = Color.green()
         embed_original.set_footer(text=get_footer())
         await interaction.message.edit(embed=embed_original, view=None)
@@ -1102,7 +1123,7 @@ class VerificationReviewView(ui.View):
         await interaction.message.edit(embed=embed_original, view=None)
         await interaction.response.send_message("Verificación denegada.", ephemeral=True)
 
-# ===================== EVENTOS DE LOGS =====================
+# ===================== EVENTOS DE LOGS (CON PLANTILLA UNIFORME) =====================
 @bot.event
 async def on_ready():
     await db.init()
@@ -1116,7 +1137,7 @@ async def on_ready():
 
 @bot.event
 async def on_member_join(member):
-    embed = Logger.create_base_embed(
+    embed = Logger.create_log_embed(
         title="👤 Miembro unido",
         description=f"**Miembro:** {member.mention} ({member.id})\n"
                     f"**Cuenta creada:** {member.created_at.strftime('%d/%m/%Y %H:%M:%S')}",
@@ -1152,7 +1173,7 @@ async def on_member_join(member):
 
 @bot.event
 async def on_member_remove(member):
-    embed = Logger.create_base_embed(
+    embed = Logger.create_log_embed(
         title="👤 Miembro salido",
         description=f"**Miembro:** {member.mention} ({member.id})\n"
                     f"**Rol más alto:** {member.top_role.mention if member.top_role else 'Ninguno'}",
@@ -1167,7 +1188,7 @@ async def on_member_update(before, after):
     if before.guild is None:
         return
     if before.nick != after.nick:
-        embed = Logger.create_base_embed(
+        embed = Logger.create_log_embed(
             title="✏️ Apodo cambiado",
             description=f"**Miembro:** {after.mention} ({after.id})\n"
                         f"**Antes:** {before.nick if before.nick else 'Ninguno'}\n"
@@ -1185,7 +1206,7 @@ async def on_member_update(before, after):
             desc += f"**Roles añadidos:** {', '.join([r.mention for r in added])}\n"
         if removed:
             desc += f"**Roles eliminados:** {', '.join([r.mention for r in removed])}"
-        embed = Logger.create_base_embed(
+        embed = Logger.create_log_embed(
             title="🔄 Roles actualizados",
             description=desc,
             color=Color.gold(),
@@ -1195,7 +1216,7 @@ async def on_member_update(before, after):
 
 @bot.event
 async def on_guild_role_create(role):
-    embed = Logger.create_base_embed(
+    embed = Logger.create_log_embed(
         title="➕ Rol creado",
         description=f"**Rol:** {role.mention} ({role.id})\n"
                     f"**Color:** {role.color}\n"
@@ -1207,7 +1228,7 @@ async def on_guild_role_create(role):
 
 @bot.event
 async def on_guild_role_delete(role):
-    embed = Logger.create_base_embed(
+    embed = Logger.create_log_embed(
         title="➖ Rol eliminado",
         description=f"**Rol:** {role.name} ({role.id})\n"
                     f"**Color:** {role.color}",
@@ -1226,7 +1247,7 @@ async def on_guild_role_update(before, after):
     if before.mentionable != after.mentionable:
         changes.append(f"**Mencionable:** {before.mentionable} → {after.mentionable}")
     if changes:
-        embed = Logger.create_base_embed(
+        embed = Logger.create_log_embed(
             title="🔄 Rol actualizado",
             description=f"**Rol:** {after.mention} ({after.id})\n" + "\n".join(changes),
             color=Color.blue(),
@@ -1239,7 +1260,7 @@ async def on_guild_emojis_update(guild, before, after):
     added = [e for e in after if e not in before]
     removed = [e for e in before if e not in after]
     for emoji in added:
-        embed = Logger.create_base_embed(
+        embed = Logger.create_log_embed(
             title="➕ Emoji creado",
             description=f"**Nombre:** {emoji.name} ({emoji.id})\n"
                         f"**Animado:** {emoji.animated}",
@@ -1249,7 +1270,7 @@ async def on_guild_emojis_update(guild, before, after):
         embed.set_thumbnail(url=str(emoji.url))
         await Logger.send_log(guild, Config.LOG_EMOJIS, embed)
     for emoji in removed:
-        embed = Logger.create_base_embed(
+        embed = Logger.create_log_embed(
             title="➖ Emoji eliminado",
             description=f"**Nombre:** {emoji.name} ({emoji.id})",
             color=Color.red(),
@@ -1261,14 +1282,17 @@ async def on_guild_emojis_update(guild, before, after):
 async def on_reaction_add(reaction, user):
     if user.bot or reaction.message.guild is None:
         return
-    embed = Logger.create_base_embed(
+    extra = [
+        ("Mensaje", f"[Ir al mensaje]({reaction.message.jump_url})", False),
+        ("Reacción", reaction.emoji, False)
+    ]
+    embed = Logger.create_log_embed(
         title="➕ Reacción añadida",
-        description=f"**Usuario:** {user.mention} ({user.id})\n"
-                    f"**Mensaje:** [Ir al mensaje]({reaction.message.jump_url})\n"
-                    f"**Reacción:** {reaction.emoji}",
+        description=f"**Usuario:** {user.mention} ({user.id})",
         color=Color.green(),
         author=user,
-        target=f"{user.mention} ({user.id})"
+        target=f"{user.mention} ({user.id})",
+        extra_fields=extra
     )
     await Logger.send_log(reaction.message.guild, Config.LOG_EMOJIS, embed)
 
@@ -1276,20 +1300,23 @@ async def on_reaction_add(reaction, user):
 async def on_reaction_remove(reaction, user):
     if user.bot or reaction.message.guild is None:
         return
-    embed = Logger.create_base_embed(
+    extra = [
+        ("Mensaje", f"[Ir al mensaje]({reaction.message.jump_url})", False),
+        ("Reacción", reaction.emoji, False)
+    ]
+    embed = Logger.create_log_embed(
         title="➖ Reacción eliminada",
-        description=f"**Usuario:** {user.mention} ({user.id})\n"
-                    f"**Mensaje:** [Ir al mensaje]({reaction.message.jump_url})\n"
-                    f"**Reacción:** {reaction.emoji}",
+        description=f"**Usuario:** {user.mention} ({user.id})",
         color=Color.red(),
         author=user,
-        target=f"{user.mention} ({user.id})"
+        target=f"{user.mention} ({user.id})",
+        extra_fields=extra
     )
     await Logger.send_log(reaction.message.guild, Config.LOG_EMOJIS, embed)
 
 @bot.event
 async def on_guild_channel_create(channel):
-    embed = Logger.create_base_embed(
+    embed = Logger.create_log_embed(
         title="➕ Canal creado",
         description=f"**Canal:** {channel.mention} ({channel.id})\n"
                     f"**Tipo:** {channel.type}\n"
@@ -1301,7 +1328,7 @@ async def on_guild_channel_create(channel):
 
 @bot.event
 async def on_guild_channel_delete(channel):
-    embed = Logger.create_base_embed(
+    embed = Logger.create_log_embed(
         title="➖ Canal eliminado",
         description=f"**Canal:** {channel.name} ({channel.id})\n"
                     f"**Tipo:** {channel.type}\n"
@@ -1319,7 +1346,7 @@ async def on_guild_channel_update(before, after):
     if before.category != after.category:
         changes.append(f"**Categoría:** {before.category.name if before.category else 'Ninguna'} → {after.category.name if after.category else 'Ninguna'}")
     if changes:
-        embed = Logger.create_base_embed(
+        embed = Logger.create_log_embed(
             title="🔄 Canal actualizado",
             description=f"**Canal:** {after.mention} ({after.id})\n" + "\n".join(changes),
             color=Color.blue(),
@@ -1329,28 +1356,36 @@ async def on_guild_channel_update(before, after):
 
 @bot.event
 async def on_invite_create(invite):
-    embed = Logger.create_base_embed(
+    extra = [
+        ("Código", invite.code, False),
+        ("Canal", invite.channel.mention, False),
+        ("Usos máximos", str(invite.max_uses if invite.max_uses else "Ilimitado"), False),
+        ("Expira", invite.expires_at.strftime('%d/%m/%Y %H:%M') if invite.expires_at else "Nunca", False)
+    ]
+    embed = Logger.create_log_embed(
         title="➕ Invitación creada",
-        description=f"**Creador:** {invite.inviter.mention if invite.inviter else 'Desconocido'}\n"
-                    f"**Código:** {invite.code}\n"
-                    f"**Canal:** {invite.channel.mention}\n"
-                    f"**Usos máximos:** {invite.max_uses if invite.max_uses else 'Ilimitado'}\n"
-                    f"**Expira:** {invite.expires_at.strftime('%d/%m/%Y %H:%M') if invite.expires_at else 'Nunca'}",
+        description=f"**Creador:** {invite.inviter.mention if invite.inviter else 'Desconocido'}",
         color=Color.green(),
         author=invite.inviter,
-        target=f"{invite.code}"
+        target=f"{invite.code}",
+        extra_fields=extra
     )
     await Logger.send_log(invite.guild, Config.LOG_INVITACIONES, embed)
 
 @bot.event
 async def on_invite_delete(invite):
-    embed = Logger.create_base_embed(
+    extra = [
+        ("Código", invite.code, False),
+        ("Canal", invite.channel.mention if invite.channel else "Desconocido", False),
+        ("Usos", str(invite.uses), False)
+    ]
+    embed = Logger.create_log_embed(
         title="➖ Invitación eliminada",
-        description=f"**Código:** {invite.code}\n"
-                    f"**Canal:** {invite.channel.mention if invite.channel else 'Desconocido'}\n"
-                    f"**Usos:** {invite.uses}",
+        description=f"**Creador:** {invite.inviter.mention if invite.inviter else 'Desconocido'}",
         color=Color.red(),
-        target=f"{invite.code}"
+        author=invite.inviter,
+        target=f"{invite.code}",
+        extra_fields=extra
     )
     await Logger.send_log(invite.guild, Config.LOG_INVITACIONES, embed)
 
@@ -1360,7 +1395,7 @@ async def on_member_ban(guild: discord.Guild, user: discord.User):
     desc = f"**Usuario baneado:** {user.mention} ({user.id})"
     if moderator:
         desc += f"\n**Moderador:** {moderator.mention} ({moderator.id})"
-    embed = Logger.create_base_embed(
+    embed = Logger.create_log_embed(
         title="🔨 Usuario baneado",
         description=desc,
         color=Color.dark_red(),
@@ -1375,7 +1410,7 @@ async def on_member_unban(guild: discord.Guild, user: discord.User):
     desc = f"**Usuario desbaneado:** {user.mention} ({user.id})"
     if moderator:
         desc += f"\n**Moderador:** {moderator.mention} ({moderator.id})"
-    embed = Logger.create_base_embed(
+    embed = Logger.create_log_embed(
         title="🔓 Usuario desbaneado",
         description=desc,
         color=Color.green(),
@@ -1388,32 +1423,36 @@ async def on_member_unban(guild: discord.Guild, user: discord.User):
 async def on_message_delete(message):
     if message.guild is None or message.author.bot:
         return
-    embed = Logger.create_base_embed(
+    extra = [
+        ("Contenido", message.content if message.content else "(Sin contenido)", False)
+    ]
+    if message.attachments:
+        extra.append(("Archivos adjuntos", "\n".join([a.url for a in message.attachments]), False))
+    embed = Logger.create_log_embed(
         title="🗑️ Mensaje eliminado",
-        description=f"**Autor del mensaje:** {message.author.mention} ({message.author.id})\n"
-                    f"**Canal:** {message.channel.mention}\n"
-                    f"**Contenido:** {message.content if message.content else '(Sin contenido)'}",
+        description=f"**Canal:** {message.channel.mention}",
         color=Color.red(),
         author=message.author,
-        target=f"{message.author.mention} ({message.author.id})"
+        target=f"{message.author.mention} ({message.author.id})",
+        extra_fields=extra
     )
-    if message.attachments:
-        embed.add_field(name="Archivos adjuntos", value="\n".join([a.url for a in message.attachments]), inline=False)
     await Logger.send_log(message.guild, Config.LOG_MENSAJES, embed)
 
 @bot.event
 async def on_message_edit(before, after):
     if before.guild is None or before.author.bot or before.content == after.content:
         return
-    embed = Logger.create_base_embed(
+    extra = [
+        ("Antes", before.content if before.content else "(Vacío)", False),
+        ("Después", after.content if after.content else "(Vacío)", False)
+    ]
+    embed = Logger.create_log_embed(
         title="✏️ Mensaje editado",
-        description=f"**Autor:** {before.author.mention} ({before.author.id})\n"
-                    f"**Canal:** {before.channel.mention}\n"
-                    f"**Antes:** {before.content if before.content else '(Vacío)'}\n"
-                    f"**Después:** {after.content if after.content else '(Vacío)'}",
+        description=f"**Canal:** {before.channel.mention}",
         color=Color.orange(),
         author=before.author,
-        target=f"{before.author.mention} ({before.author.id})"
+        target=f"{before.author.mention} ({before.author.id})",
+        extra_fields=extra
     )
     await Logger.send_log(before.guild, Config.LOG_MENSAJES, embed)
 
@@ -1425,7 +1464,7 @@ async def on_bulk_message_delete(messages):
     if guild is None:
         return
     channel = messages[0].channel
-    embed = Logger.create_base_embed(
+    embed = Logger.create_log_embed(
         title="📦 Mensajes eliminados en masa",
         description=f"**Canal:** {channel.mention}\n"
                     f"**Cantidad:** {len(messages)} mensajes",
@@ -1434,11 +1473,10 @@ async def on_bulk_message_delete(messages):
     )
     await Logger.send_log(guild, Config.LOG_MENSAJES, embed)
 
-# ===================== PROCESO DE VERIFICACIÓN POR DM (MEJORADO) =====================
+# ===================== PROCESO DE VERIFICACIÓN POR DM =====================
 @bot.event
 async def on_message(message):
     try:
-        # Solo procesar mensajes DM de usuarios en sesión de verificación
         if isinstance(message.channel, discord.DMChannel) and message.author.id in verification_sessions:
             user_id = message.author.id
             session = verification_sessions[user_id]
@@ -1449,66 +1487,58 @@ async def on_message(message):
 
             if step == 1:
                 username = message.content.strip()
-                try:
-                    roblox_id = await check_roblox_user(username)
-                except Exception as e:
-                    await message.channel.send("❌ Error al verificar usuario de Roblox. Intenta de nuevo más tarde.")
-                    print(f"[Error] API Roblox falló: {e}")
+                if not username:
+                    await message.channel.send("❌ Debes escribir un nombre de usuario de Roblox. Inténtalo de nuevo.")
                     return
-
-                if not roblox_id:
-                    await message.channel.send("❌ El usuario de Roblox no existe. Por favor, vuelve a iniciar el proceso con el botón COMENZAR.")
-                    verification_sessions.pop(user_id, None)
-                    return
-
                 answers["roblox_user"] = username
-                answers["roblox_id"] = roblox_id
                 session["step"] = 2
+                verification_sessions[user_id] = session
 
-                avatar_url = await get_roblox_avatar(roblox_id)
-                if avatar_url:
-                    embed_confirm = Embed(
-                        title="✅ Usuario de Roblox verificado",
-                        description=f"**Nombre:** {username}\n**ID:** {roblox_id}",
-                        color=Color.green()
-                    )
-                    embed_confirm.set_thumbnail(url=avatar_url)
-                    embed_confirm.set_footer(text=get_footer())
-                    await message.channel.send(embed=embed_confirm)
-                else:
-                    await message.channel.send(f"✅ Usuario de Roblox verificado (ID: {roblox_id}).")
-
+                await message.channel.send(f"✅ Nombre de Roblox guardado: **{username}**")
                 await message.channel.send("**Pregunta 2:** ¿Cómo te has metido al servidor?")
+                return
 
             elif step == 2:
                 answers["como_metiste"] = message.content.strip()
                 session["step"] = 3
+                verification_sessions[user_id] = session
                 await message.channel.send("**Pregunta 3:** Del 1 al 10, ¿cuánto sabes rolear?")
+                return
 
             elif step == 3:
                 answers["nivel_roleo"] = message.content.strip()
                 session["step"] = 4
+                verification_sessions[user_id] = session
                 await message.channel.send("**Pregunta 4:** ¿Qué significa MG? Pon un ejemplo.")
+                return
 
             elif step == 4:
                 answers["mg"] = message.content.strip()
                 session["step"] = 5
+                verification_sessions[user_id] = session
                 await message.channel.send("**Pregunta 5:** ¿Qué significa PG? Pon un ejemplo.")
+                return
 
             elif step == 5:
                 answers["pg"] = message.content.strip()
                 session["step"] = 6
+                verification_sessions[user_id] = session
                 await message.channel.send("**Pregunta 6:** ¿Qué harías si ves a alguien haciendo antirol?")
+                return
 
             elif step == 6:
                 answers["antirol"] = message.content.strip()
                 session["step"] = 7
+                verification_sessions[user_id] = session
                 await message.channel.send("**Pregunta 7:** ¿Qué te gustaría ser dentro del servidor?")
+                return
 
             elif step == 7:
                 answers["aspiracion"] = message.content.strip()
                 session["step"] = 8
+                verification_sessions[user_id] = session
                 await message.channel.send("**Pregunta 8:** ¿Una vez verificado aceptas que no podrás realizar ningún antirol? (responde sí o no)")
+                return
 
             elif step == 8:
                 respuesta = message.content.strip().lower()
@@ -1566,7 +1596,6 @@ async def on_message(message):
                     view = VerificationReviewView(
                         user_id=message.author.id,
                         roblox_name=answers['roblox_user'],
-                        roblox_id=answers['roblox_id'],
                         answers=answers,
                         analysis=analysis
                     )
@@ -1576,22 +1605,18 @@ async def on_message(message):
                     await message.channel.send("❌ No se encontró el canal de revisiones. Contacta con un administrador.")
 
                 verification_sessions.pop(user_id, None)
-
-            # Guardar cambios
-            verification_sessions[user_id] = session
-            return  # Importante: no procesar como comando
+                return
 
     except Exception as e:
         print(f"[ERROR en verificación] {e}")
         traceback.print_exc()
         try:
-            await message.channel.send("❌ Ocurrió un error al procesar tu respuesta. Por favor, inicia de nuevo el proceso.")
+            await message.channel.send("❌ Ocurrió un error inesperado. Por favor, inicia de nuevo el proceso con el botón COMENZAR.")
         except:
             pass
         if message.author.id in verification_sessions:
             verification_sessions.pop(message.author.id, None)
 
-    # Procesar comandos (solo para mensajes de servidor, no DM)
     await bot.process_commands(message)
 
 # ===================== COMANDOS =====================
@@ -1807,6 +1832,7 @@ async def desbloquear_ticket(interaction: Interaction):
     except Exception as e:
         await interaction.response.send_message(f"Error: {e}", ephemeral=True)
 
+# ---------- ABRIR Y CERRAR SERVIDOR CON PING A CIUDADANOS ----------
 @bot.tree.command(name="abrir-servidor", description="Abre el servidor (solo staff)")
 async def abrir_servidor(interaction: Interaction):
     if not is_staff(interaction.user):
@@ -1884,6 +1910,7 @@ async def votacion_abrir(interaction: Interaction):
     await message.add_reaction("❌")
     await message.add_reaction("⏰")
 
+# ===================== RESTO DE COMANDOS (SANCIONES, CITAR, VALORAR, SYNC) =====================
 @bot.tree.command(name="sancionar", description="Aplica una sanción a un usuario por infracción de normas (MG, PG, faltas, etc.)")
 @app_commands.describe(
     usuario="Usuario a sancionar",
